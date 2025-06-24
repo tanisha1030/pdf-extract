@@ -1,0 +1,14 @@
+
+streamlit
+PyMuPDF
+pytesseract
+pillow
+pdfplumber
+tabula-py
+camelot-py[cv]
+openpyxl
+python-pptx
+python-docx
+pandas
+numpy
+opencv-python-headless
