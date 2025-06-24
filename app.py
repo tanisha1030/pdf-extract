@@ -64,17 +64,6 @@ if uploaded_files:
                     file_name=f"{data['filename']}_extraction.json",
                     mime="application/json"
                 )
-
-            extractor.create_summary_report(results)
-            with open("extraction_summary.txt", "r", encoding="utf-8") as f:
-                summary_text = f.read()
-
-            st.download_button(
-                label="📄 Download Summary Report",
-                data=summary_text,
-                file_name="extraction_summary.txt",
-                mime="text/plain"
-            )
         else:
             st.error("❌ No files could be processed.")
 else:
