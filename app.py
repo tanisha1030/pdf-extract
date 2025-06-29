@@ -76,7 +76,7 @@ if uploaded_files:
                         if selected_page_data['images']:
                             st.markdown("**Images on this page:**")
                             for img in selected_page_data['images']:
-                                st.image(img['filename'], caption=os.path.basename(img['filename']), use_column_width=True)
+                                st.image(img['filename'], caption=os.path.basename(img['filename']), use_container_width=True)
 
                         if selected_page_data['tables']:
                             st.markdown("**Tables on this page:**")
