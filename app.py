@@ -10,6 +10,7 @@ from io import BytesIO
 import base64
 import time
 from collections import Counter
+from PIL import Image
 
 # Import the extractor class
 from pdfextract import ComprehensiveDocumentExtractor
@@ -77,6 +78,30 @@ st.markdown("""
         border-left: 4px solid #667eea;
         margin-bottom: 1rem;
     }
+    
+    .page-selector {
+        background: #f8f9fa;
+        padding: 1rem;
+        border-radius: 8px;
+        border: 1px solid #dee2e6;
+        margin-bottom: 1rem;
+    }
+    
+    .page-content {
+        background: white;
+        padding: 1.5rem;
+        border-radius: 8px;
+        border: 1px solid #dee2e6;
+        margin-bottom: 1rem;
+    }
+    
+    .image-container {
+        border: 1px solid #dee2e6;
+        border-radius: 8px;
+        padding: 1rem;
+        margin-bottom: 1rem;
+        background: #f8f9fa;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -87,6 +112,8 @@ if 'processing_complete' not in st.session_state:
     st.session_state.processing_complete = False
 if 'uploaded_files' not in st.session_state:
     st.session_state.uploaded_files = []
+if 'selected_page' not in st.session_state:
+    st.session_state.selected_page = {}
 
 # Default processing options
 DEFAULT_OPTIONS = {
@@ -100,6 +127,23 @@ DEFAULT_OPTIONS = {
     'save_as_csv': True,
     'create_summary': True
 }
+
+def decode_image_data(image_data):
+    """Decode base64 image data to PIL Image"""
+    try:
+        if isinstance(image_data, str):
+            # Remove data URL prefix if present
+            if image_data.startswith('data:image'):
+                image_data = image_data.split(',')[1]
+            
+            # Decode base64
+            image_bytes = base64.b64decode(image_data)
+            image = Image.open(BytesIO(image_bytes))
+            return image
+        return None
+    except Exception as e:
+        st.error(f"Error decoding image: {str(e)}")
+        return None
 
 def main():
     # Header
@@ -275,6 +319,126 @@ def process_documents(uploaded_files, options):
         except Exception as e:
             st.error(f"❌ Error during processing: {str(e)}")
 
+def display_page_content(file_name, data, page_number):
+    """Display content for a specific page"""
+    pages = data.get('pages', [])
+    
+    if not pages or page_number < 1 or page_number > len(pages):
+        st.error(f"Page {page_number} not found")
+        return
+    
+    page = pages[page_number - 1]
+    
+    st.markdown(f'<div class="page-content">', unsafe_allow_html=True)
+    
+    # Page header
+    st.subheader(f"📄 Page {page_number}")
+    
+    # Page statistics
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Word Count", page.get('word_count', 0))
+    with col2:
+        st.metric("Character Count", page.get('char_count', 0))
+    with col3:
+        st.metric("Images", len(page.get('images', [])))
+    with col4:
+        st.metric("Tables", len(page.get('tables', [])))
+    
+    # Page content tabs
+    tab1, tab2, tab3, tab4 = st.tabs(["📝 Text", "📊 Tables", "🖼️ Images", "ℹ️ Metadata"])
+    
+    with tab1:
+        st.subheader("Page Text")
+        page_text = page.get('text', '')
+        if page_text:
+            st.text_area("Content", page_text, height=400, disabled=True)
+        else:
+            st.info("No text found on this page")
+    
+    with tab2:
+        st.subheader("Page Tables")
+        page_tables = page.get('tables', [])
+        if page_tables:
+            for i, table in enumerate(page_tables, 1):
+                st.write(f"**Table {i}**")
+                try:
+                    if isinstance(table, dict) and 'data' in table:
+                        table_data = table['data']
+                        if isinstance(table_data, list) and table_data:
+                            if isinstance(table_data[0], dict):
+                                df = pd.DataFrame(table_data)
+                            else:
+                                df = pd.DataFrame(table_data[1:], columns=table_data[0])
+                            st.dataframe(df, use_container_width=True)
+                        else:
+                            st.write("No table data available")
+                    else:
+                        st.write("Table format not recognized")
+                except Exception as e:
+                    st.error(f"Error displaying table: {str(e)}")
+        else:
+            st.info("No tables found on this page")
+    
+    with tab3:
+        st.subheader("Page Images")
+        page_images = page.get('images', [])
+        if page_images:
+            for i, img in enumerate(page_images, 1):
+                st.markdown(f'<div class="image-container">', unsafe_allow_html=True)
+                
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.write(f"**Image {i}**")
+                    st.write(f"**Filename:** {os.path.basename(img.get('filename', 'unknown'))}")
+                    st.write(f"**Size:** {img.get('width', 0)}×{img.get('height', 0)}")
+                    st.write(f"**Color:** {img.get('colorspace', 'unknown')}")
+                    st.write(f"**File size:** {img.get('size_bytes', 0)} bytes")
+                
+                with col2:
+                    # Display the actual image
+                    if 'image_data' in img:
+                        try:
+                            image = decode_image_data(img['image_data'])
+                            if image:
+                                st.image(image, caption=f"Image {i}", use_column_width=True)
+                                
+                                # Download button for individual image
+                                if st.button(f"Download Image {i}", key=f"download_img_{file_name}_{page_number}_{i}"):
+                                    # Convert PIL image to bytes
+                                    img_buffer = BytesIO()
+                                    image.save(img_buffer, format='PNG')
+                                    img_bytes = img_buffer.getvalue()
+                                    
+                                    st.download_button(
+                                        label="Download PNG",
+                                        data=img_bytes,
+                                        file_name=f"image_{page_number}_{i}.png",
+                                        mime="image/png",
+                                        key=f"download_png_{file_name}_{page_number}_{i}"
+                                    )
+                            else:
+                                st.warning("Could not decode image data")
+                        except Exception as e:
+                            st.error(f"Error displaying image: {str(e)}")
+                    else:
+                        st.warning("No image data available")
+                
+                st.markdown('</div>', unsafe_allow_html=True)
+        else:
+            st.info("No images found on this page")
+    
+    with tab4:
+        st.subheader("Page Metadata")
+        if 'metadata' in page:
+            for key, value in page['metadata'].items():
+                st.write(f"**{key}:** {value}")
+        else:
+            st.info("No metadata available for this page")
+    
+    st.markdown('</div>', unsafe_allow_html=True)
+
 def display_results(results):
     """Display extraction results"""
     
@@ -302,7 +466,7 @@ def display_results(results):
         st.metric("📊 Tables", total_tables)
     
     # Detailed results tabs
-    tab1, tab2, tab3, tab4 = st.tabs(["📄 File Details", "📊 Tables", "🖼️ Images", "📋 Summary"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📄 File Details", "📖 Page Viewer", "📊 Tables", "🖼️ Images", "📋 Summary"])
     
     with tab1:
         st.subheader("File Processing Details")
@@ -348,6 +512,64 @@ def display_results(results):
                             st.write(f"  - {key}: {value}")
     
     with tab2:
+        st.subheader("📖 Page-by-Page Viewer")
+        
+        # File selector
+        pdf_files = {name: data for name, data in results.items() if data['file_type'] == 'PDF'}
+        
+        if pdf_files:
+            selected_file = st.selectbox(
+                "Select PDF file to view:",
+                list(pdf_files.keys()),
+                key="page_viewer_file_selector"
+            )
+            
+            if selected_file:
+                file_data = pdf_files[selected_file]
+                pages = file_data.get('pages', [])
+                
+                if pages:
+                    # Page selector
+                    st.markdown('<div class="page-selector">', unsafe_allow_html=True)
+                    col1, col2, col3 = st.columns([1, 2, 1])
+                    
+                    with col1:
+                        if st.button("⬅️ Previous", key="prev_page"):
+                            if selected_file not in st.session_state.selected_page:
+                                st.session_state.selected_page[selected_file] = 1
+                            if st.session_state.selected_page[selected_file] > 1:
+                                st.session_state.selected_page[selected_file] -= 1
+                    
+                    with col2:
+                        if selected_file not in st.session_state.selected_page:
+                            st.session_state.selected_page[selected_file] = 1
+                        
+                        page_number = st.number_input(
+                            f"Page (1-{len(pages)})",
+                            min_value=1,
+                            max_value=len(pages),
+                            value=st.session_state.selected_page[selected_file],
+                            key=f"page_selector_{selected_file}"
+                        )
+                        st.session_state.selected_page[selected_file] = page_number
+                    
+                    with col3:
+                        if st.button("Next ➡️", key="next_page"):
+                            if selected_file not in st.session_state.selected_page:
+                                st.session_state.selected_page[selected_file] = 1
+                            if st.session_state.selected_page[selected_file] < len(pages):
+                                st.session_state.selected_page[selected_file] += 1
+                    
+                    st.markdown('</div>', unsafe_allow_html=True)
+                    
+                    # Display selected page content
+                    display_page_content(selected_file, file_data, page_number)
+                else:
+                    st.info("No pages found in the selected file")
+        else:
+            st.info("No PDF files found. Page viewer is only available for PDF files.")
+    
+    with tab3:
         st.subheader("📊 Extracted Tables")
         
         if total_tables > 0:
@@ -400,7 +622,7 @@ def display_results(results):
         else:
             st.info("No tables were extracted from the uploaded documents.")
     
-    with tab3:
+    with tab4:
         st.subheader("🖼️ Extracted Images")
         
         if total_images > 0:
@@ -413,21 +635,51 @@ def display_results(results):
                         for page in data.get('pages', []):
                             images = page.get('images', [])
                             if images:
-                                st.write(f"  Page {page['page_number']}: {len(images)} images")
+                                st.write(f"**Page {page['page_number']}:** {len(images)} images")
                                 
-                                # Display image information
-                                for img in images:
-                                    col1, col2 = st.columns(2)
-                                    with col1:
-                                        st.write(f"    📸 {os.path.basename(img['filename'])}")
-                                        st.write(f"    Size: {img['width']}×{img['height']}")
-                                    with col2:
-                                        st.write(f"    Color: {img['colorspace']}")
-                                        st.write(f"    File size: {img['size_bytes']} bytes")
+                                # Display images in a grid
+                                cols = st.columns(min(3, len(images)))
+                                for idx, img in enumerate(images):
+                                    with cols[idx % 3]:
+                                        st.markdown(f'<div class="image-container">', unsafe_allow_html=True)
+                                        
+                                        # Image info
+                                        st.write(f"**📸 Image {idx + 1}**")
+                                        st.write(f"Size: {img.get('width', 0)}×{img.get('height', 0)}")
+                                        st.write(f"Format: {img.get('colorspace', 'unknown')}")
+                                        
+                                        # Display image
+                                        if 'image_data' in img:
+                                            try:
+                                                image = decode_image_data(img['image_data'])
+                                                if image:
+                                                    st.image(image, use_column_width=True)
+                                                    
+                                                    # Download button
+                                                    img_buffer = BytesIO()
+                                                    image.save(img_buffer, format='PNG')
+                                                    img_bytes = img_buffer.getvalue()
+                                                    
+                                                    st.download_button(
+                                                        label="⬇️ Download",
+                                                        data=img_bytes,
+                                                        file_name=f"{file_name}_page_{page['page_number']}_img_{idx + 1}.png",
+                                                        mime="image/png",
+                                                        key=f"download_img_{file_name}_{page['page_number']}_{idx}",
+                                                        use_container_width=True
+                                                    )
+                                                else:
+                                                    st.warning("Could not decode image")
+                                            except Exception as e:
+                                                st.error(f"Error: {str(e)}")
+                                        else:
+                                            st.info("No image data available")
+                                        
+                                        st.markdown('</div>', unsafe_allow_html=True)
         else:
             st.info("No images were extracted from the uploaded documents.")
     
-    with tab4:
+    with tab5:
         st.subheader("📋 Processing Summary")
         
         # File type distribution
@@ -475,21 +727,18 @@ def display_results(results):
     
     with col2:
         # CSV download for tables
-        if total_tables > 0:
-            if st.button("📊 Download All Tables (CSV)", use_container_width=True):
-                # Create ZIP file with all tables
-                zip_buffer = BytesIO()
-                with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-                    
-                    table_count = 0
-                    for file_name, data in results.items():
-                        file_base = os.path.splitext(file_name)[0]
-                        
-                        for i, table in enumerate(data.get('extracted_tables', []), 1):
+                # CSV download for tables
+        if st.button("📊 Download All Tables (CSV)", use_container_width=True):
+            # Create a zip file containing all tables as CSV files
+            zip_buffer = BytesIO()
+            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                for file_name, data in results.items():
+                    tables = data.get('extracted_tables', [])
+                    if tables:
+                        for i, table in enumerate(tables, 1):
                             try:
                                 if table.get('data'):
-                                    csv_name = f"{file_base}_table_{i}_{table.get('method', 'unknown')}.csv"
-                                    
+                                    # Create DataFrame from table data
                                     if isinstance(table['data'], list) and isinstance(table['data'][0], dict):
                                         df = pd.DataFrame(table['data'])
                                     elif isinstance(table['data'], list):
@@ -497,27 +746,75 @@ def display_results(results):
                                     else:
                                         continue
                                     
-                                    csv_data = df.to_csv(index=False)
-                                    zip_file.writestr(csv_name, csv_data)
-                                    table_count += 1
+                                    # Save DataFrame to CSV in memory
+                                    csv_buffer = BytesIO()
+                                    df.to_csv(csv_buffer, index=False)
+                                    csv_buffer.seek(0)
+                                    
+                                    # Add to zip file
+                                    base_name = os.path.splitext(file_name)[0]
+                                    zip_file.writestr(
+                                        f"{base_name}_table_{i}.csv",
+                                        csv_buffer.getvalue()
+                                    )
                             except Exception as e:
-                                continue
-                
-                if table_count > 0:
-                    st.download_button(
-                        label=f"Download {table_count} Tables (ZIP)",
-                        data=zip_buffer.getvalue(),
-                        file_name=f"extracted_tables_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
-                        mime="application/zip",
-                        use_container_width=True
-                    )
+                                st.error(f"Error processing table {i} from {file_name}: {str(e)}")
+            
+            # Prepare the zip file for download
+            zip_buffer.seek(0)
+            st.download_button(
+                label="Download Tables ZIP",
+                data=zip_buffer,
+                file_name=f"extracted_tables_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
+                mime="application/zip",
+                use_container_width=True
+            )
+
+    # Images download section
+    st.markdown("---")
+    st.subheader("🖼️ Download Images")
     
-    # Clear results button
-    if st.button("🔄 Process New Documents", use_container_width=True):
-        st.session_state.extraction_results = None
-        st.session_state.processing_complete = False
-        st.session_state.uploaded_files = []
-        st.rerun()
+    if total_images > 0:
+        # Create a zip file containing all images
+        if st.button("📸 Download All Images (ZIP)", use_container_width=True):
+            zip_buffer = BytesIO()
+            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                for file_name, data in results.items():
+                    if data.get('total_images', 0) > 0:
+                        # Handle PDF images
+                        if data['file_type'] == 'PDF':
+                            for page in data.get('pages', []):
+                                images = page.get('images', [])
+                                for idx, img in enumerate(images, 1):
+                                    if 'image_data' in img:
+                                        try:
+                                            image = decode_image_data(img['image_data'])
+                                            if image:
+                                                # Save image to buffer
+                                                img_buffer = BytesIO()
+                                                image.save(img_buffer, format='PNG')
+                                                img_buffer.seek(0)
+                                                
+                                                # Add to zip file
+                                                base_name = os.path.splitext(file_name)[0]
+                                                zip_file.writestr(
+                                                    f"{base_name}_page_{page['page_number']}_img_{idx}.png",
+                                                    img_buffer.getvalue()
+                                                )
+                                        except Exception as e:
+                                            st.error(f"Error processing image {idx} from {file_name}: {str(e)}")
+            
+            # Prepare the zip file for download
+            zip_buffer.seek(0)
+            st.download_button(
+                label="Download Images ZIP",
+                data=zip_buffer,
+                file_name=f"extracted_images_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
+                mime="application/zip",
+                use_container_width=True
+            )
+    else:
+        st.info("No images available for download")
 
 if __name__ == "__main__":
     main()
