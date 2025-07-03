@@ -1,813 +1,114 @@
 import streamlit as st
+import tempfile
 import os
 import json
-import time
-import shutil
 import zipfile
-import tempfile
-import pandas as pd
-from datetime import datetime
 from pathlib import Path
-import io
-import base64
-
-# Import your existing extractor class
 from pdfextract import ComprehensiveDocumentExtractor
-
-# Page configuration
-st.set_page_config(
-    page_title="Document Extractor Pro",
-    page_icon="📄",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# Custom CSS for better styling
-st.markdown("""
-<style>
-    .main-header {
-        text-align: center;
-        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        padding: 2rem;
-        border-radius: 10px;
-        margin-bottom: 2rem;
-    }
-    
-    .stats-card {
-        background: #f8f9fa;
-        padding: 1rem;
-        border-radius: 8px;
-        border-left: 4px solid #667eea;
-        margin: 0.5rem 0;
-    }
-    
-    .page-content {
-        background: white;
-        padding: 2rem;
-        border-radius: 10px;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        margin: 1rem 0;
-        min-height: 400px;
-    }
-    
-    .page-navigation {
-        background: #f8f9fa;
-        padding: 1rem;
-        border-radius: 8px;
-        margin: 1rem 0;
-        text-align: center;
-    }
-    
-    .page-selector {
-        background: white;
-        padding: 1rem;
-        border-radius: 8px;
-        margin: 1rem 0;
-        border: 2px solid #667eea;
-    }
-    
-    .content-section {
-        margin: 1.5rem 0;
-        padding: 1rem;
-        border-left: 3px solid #667eea;
-        background: #f8f9fa;
-        border-radius: 0 8px 8px 0;
-    }
-    
-    .text-content {
-        font-family: 'Georgia', serif;
-        line-height: 1.6;
-        color: #2c3e50;
-        text-align: justify;
-        padding: 1rem;
-        background: white;
-        border-radius: 8px;
-        border: 1px solid #e9ecef;
-    }
-    
-    .image-gallery {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-        gap: 1rem;
-        margin: 1rem 0;
-    }
-    
-    .image-item {
-        background: white;
-        border-radius: 8px;
-        padding: 1rem;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-        text-align: center;
-    }
-    
-    .table-container {
-        background: white;
-        padding: 1rem;
-        border-radius: 8px;
-        margin: 1rem 0;
-        overflow-x: auto;
-    }
-    
-    .success-message {
-        background: #d4edda;
-        color: #155724;
-        padding: 1rem;
-        border-radius: 8px;
-        border-left: 4px solid #28a745;
-        margin: 1rem 0;
-    }
-    
-    .error-message {
-        background: #f8d7da;
-        color: #721c24;
-        padding: 1rem;
-        border-radius: 8px;
-        border-left: 4px solid #dc3545;
-        margin: 1rem 0;
-    }
-    
-    .feature-card {
-        background: white;
-        padding: 1.5rem;
-        border-radius: 10px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        margin: 1rem 0;
-    }
-    
-    .slide-content {
-        background: white;
-        padding: 2rem;
-        border-radius: 10px;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        margin: 1rem 0;
-        min-height: 300px;
-    }
-    
-    .sheet-tab {
-        background: #e9ecef;
-        color: #495057;
-        padding: 0.5rem 1rem;
-        border-radius: 20px;
-        margin: 0.25rem;
-        display: inline-block;
-        font-size: 0.9rem;
-    }
-    
-    .sheet-tab.active {
-        background: #667eea;
-        color: white;
-    }
-    
-    .page-nav-buttons {
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        gap: 1rem;
-        margin: 1rem 0;
-    }
-    
-    .page-info {
-        background: #e3f2fd;
-        padding: 1rem;
-        border-radius: 8px;
-        text-align: center;
-        margin: 1rem 0;
-        border: 1px solid #2196f3;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# Initialize session state
-if 'processing_complete' not in st.session_state:
-    st.session_state.processing_complete = False
-if 'results' not in st.session_state:
-    st.session_state.results = None
-if 'stats' not in st.session_state:
-    st.session_state.stats = None
-if 'selected_file' not in st.session_state:
-    st.session_state.selected_file = None
-if 'selected_page' not in st.session_state:
-    st.session_state.selected_page = 1
+from datetime import datetime
 
 def main():
-    # Main header
-    st.markdown("""
-    <div class="main-header">
-        <h1>📄 Document Extractor Pro</h1>
-        <p>Extract text, images, tables, and metadata from PDF, DOCX, PPTX, and Excel files</p>
-    </div>
-    """, unsafe_allow_html=True)
+    """Main Streamlit application"""
+    st.set_page_config(page_title="Document Extractor", layout="wide")
+    st.title("📄 Comprehensive Document Extractor")
     
-    # Sidebar with features
-    with st.sidebar:
-        st.markdown("## 🔧 Features")
-        st.markdown("""
-        - **PDF Processing**: Text, images, tables, metadata
-        - **DOCX Support**: Paragraphs, tables, styles
-        - **PPTX Support**: Slides, text, tables
-        - **Excel Support**: Multiple sheets, data analysis
-        - **Advanced Table Detection**: Multiple extraction methods
-        - **Page-by-Page Content View**: Navigate through document content
-        - **Comprehensive Reports**: Summary and detailed analysis
-        """)
-        
-        st.markdown("## 📊 Supported Formats")
-        st.markdown("""
-        - **PDF** (.pdf)
-        - **Word** (.docx)
-        - **PowerPoint** (.pptx)
-        - **Excel** (.xlsx, .xls)
-        """)
-        
-        # Add reset button
-        add_reset_button()
+    # Initialize session state
+    if 'processing_complete' not in st.session_state:
+        st.session_state.processing_complete = False
+        st.session_state.results = None
+        st.session_state.stats = None
     
-    # Check if we have results to display
-    if st.session_state.processing_complete and st.session_state.results:
-        # Show content viewer with default settings
-        show_content_viewer(st.session_state.results, True, True)
-    else:
-        # Show upload interface with default settings
-        show_upload_interface()
-
-def show_upload_interface():
-    """Show the file upload interface"""
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        st.markdown("## 📤 Upload Documents")
-        
-        # File upload
-        uploaded_files = st.file_uploader(
-            "Choose files to process",
-            type=['pdf', 'docx', 'pptx', 'xlsx', 'xls'],
-            accept_multiple_files=True,
-            help="Upload multiple files for batch processing"
-        )
-        
-        if uploaded_files:
-            st.markdown("### 📋 Selected Files")
-            file_info = []
-            total_size = 0
-            
-            for file in uploaded_files:
-                file_size_mb = len(file.getvalue()) / (1024 * 1024)
-                total_size += file_size_mb
-                file_info.append({
-                    'Filename': file.name,
-                    'Type': file.type,
-                    'Size (MB)': f"{file_size_mb:.2f}"
-                })
-            
-            # Display file information
-            df_files = pd.DataFrame(file_info)
-            st.dataframe(df_files, use_container_width=True)
-            
-            # Show total size
-            st.info(f"Total size: {total_size:.2f} MB")
-            
-            # Process button
-            if st.button("🚀 Process Documents", type="primary", use_container_width=True):
-                process_documents(uploaded_files)
-    
-    with col2:
-        st.markdown("## 📈 Quick Stats")
-        st.markdown("""
-        <div class="feature-card">
-            <h4>🎯 How to Use</h4>
-            <ol>
-                <li>Upload your documents using the file uploader</li>
-                <li>Review the selected files</li>
-                <li>Click "Process Documents" to start extraction</li>
-                <li>Navigate through document content page by page</li>
-                <li>Download the results when needed</li>
-            </ol>
-        </div>
-        """, unsafe_allow_html=True)
-
-def show_content_viewer(results, show_images, show_tables):
-    """Show the content viewer with page navigation"""
-    st.markdown("## 📖 Document Content Viewer")
-    
-    # File selector
-    file_names = [data['filename'] for data in results.values()]
-    
-    # Create columns for file selection and stats
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        selected_file = st.selectbox(
-            "📁 Select a file to view:",
-            file_names,
-            key="file_selector",
-            help="Choose a file to view its content page by page"
-        )
-        
-        if selected_file != st.session_state.selected_file:
-            st.session_state.selected_file = selected_file
-            st.session_state.selected_page = 1
-    
-    with col2:
-        # Quick stats for selected file
-        if selected_file:
-            file_data = get_file_data(results, selected_file)
-            if file_data:
-                st.markdown("### 📊 File Stats")
-                st.metric("Type", file_data['file_type'])
-                st.metric("Words", f"{file_data.get('total_words', 0):,}")
-                st.metric("Size", f"{file_data.get('file_size_mb', 0):.2f} MB")
-    
-    if selected_file:
-        file_data = get_file_data(results, selected_file)
-        if file_data:
-            # Show content based on file type
-            if file_data['file_type'] == 'PDF':
-                show_pdf_content(file_data, show_images, show_tables)
-            elif file_data['file_type'] == 'DOCX':
-                show_docx_content(file_data, show_images, show_tables)
-            elif file_data['file_type'] == 'PPTX':
-                show_pptx_content(file_data, show_images, show_tables)
-            elif file_data['file_type'] == 'Excel':
-                show_excel_content(file_data, show_tables)
-    
-    # Add download section
-    st.markdown("---")
-    create_download_section(results, st.session_state.stats)
-
-def get_file_data(results, filename):
-    """Get file data by filename"""
-    for data in results.values():
-        if data['filename'] == filename:
-            return data
-    return None
-
-def show_pdf_content(file_data, show_images, show_tables):
-    """Show PDF content with enhanced page navigation"""
-    st.markdown("### 📄 PDF Content")
-    
-    pages = file_data.get('pages', [])
-    if not pages:
-        st.warning("No pages found in this PDF file.")
-        return
-    
-    total_pages = len(pages)
-    
-    # Enhanced page navigation with better layout
-    st.markdown("""
-    <div class="page-selector">
-        <h4>📄 Page Navigation</h4>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Main navigation controls
-    nav_col1, nav_col2, nav_col3 = st.columns([1, 2, 1])
-    
-    with nav_col1:
-        if st.button("⬅️ Previous", disabled=st.session_state.selected_page <= 1, use_container_width=True):
-            st.session_state.selected_page -= 1
-            st.rerun()
-    
-    with nav_col2:
-        # Page selector dropdown
-        selected_page = st.selectbox(
-            "📄 Go to page:",
-            range(1, total_pages + 1),
-            index=st.session_state.selected_page - 1,
-            key="pdf_page_selector",
-            help=f"Select a page to view (1-{total_pages})"
-        )
-        
-        if selected_page != st.session_state.selected_page:
-            st.session_state.selected_page = selected_page
-            st.rerun()
-    
-    with nav_col3:
-        if st.button("Next ➡️", disabled=st.session_state.selected_page >= total_pages, use_container_width=True):
-            st.session_state.selected_page += 1
-            st.rerun()
-    
-    # Page information display
-    st.markdown(f"""
-    <div class="page-info">
-        <h4>📄 Page {st.session_state.selected_page} of {total_pages}</h4>
-        <p>Use the controls above to navigate between pages</p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Show current page content
-    current_page = pages[st.session_state.selected_page - 1]
-    
-    st.markdown(f"""
-    <div class="page-content">
-        <h3>📄 Page {current_page.get('page_number', st.session_state.selected_page)} Content</h3>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Show text content
-    page_text = current_page.get('text', '').strip()
-    if page_text:
-        st.markdown("#### 📝 Text Content")
-        st.markdown(f"""
-        <div class="text-content">
-            {page_text.replace('\n', '<br>')}
-        </div>
-        """, unsafe_allow_html=True)
-    else:
-        st.info("No text content found on this page.")
-    
-    # Show images if enabled
-    if show_images and current_page.get('images'):
-        st.markdown("#### 🖼️ Images")
-        images = current_page['images']
-        
-        # Display images in a grid
-        cols = st.columns(min(3, len(images)))
-        for i, image in enumerate(images):
-            with cols[i % len(cols)]:
-                st.markdown(f"""
-                <div class="image-item">
-                    <strong>Image {i+1}</strong><br>
-                    Size: {image.get('width', 0)} x {image.get('height', 0)}<br>
-                    File: {image.get('size_bytes', 0)} bytes
-                </div>
-                """, unsafe_allow_html=True)
-                
-                # Try to display image if file exists
-                if image.get('filename') and os.path.exists(image['filename']):
-                    try:
-                        st.image(image['filename'], use_container_width=True)
-                    except Exception as e:
-                        st.error(f"Error displaying image: {str(e)}")
-                else:
-                    st.warning("Image file not found")
-    
-    # Show tables if enabled
-    if show_tables and current_page.get('tables'):
-        st.markdown("#### 📊 Tables")
-        for i, table in enumerate(current_page['tables']):
-            st.markdown(f"**Table {i+1}**")
-            try:
-                if table.get('data'):
-                    df = pd.DataFrame(table['data'])
-                    st.dataframe(df, use_container_width=True)
-                else:
-                    st.info("No table data available")
-            except Exception as e:
-                st.error(f"Error displaying table: {str(e)}")
-    
-    # Show page metadata
-    with st.expander("📋 Page Metadata"):
-        metadata = {
-            'Page Number': current_page.get('page_number', st.session_state.selected_page),
-            'Word Count': len(page_text.split()) if page_text else 0,
-            'Character Count': len(page_text) if page_text else 0,
-            'Images': len(current_page.get('images', [])),
-            'Tables': len(current_page.get('tables', []))
-        }
-        
-        for key, value in metadata.items():
-            st.write(f"**{key}:** {value}")
-
-def show_docx_content(file_data, show_images, show_tables):
-    """Show DOCX content with enhanced paragraph navigation"""
-    st.markdown("### 📄 Word Document Content")
-    
-    paragraphs = file_data.get('paragraphs', [])
-    if not paragraphs:
-        st.warning("No paragraphs found in this document.")
-        return
-    
-    # Group paragraphs into sections for better navigation
-    paragraphs_per_section = 10
-    total_sections = (len(paragraphs) + paragraphs_per_section - 1) // paragraphs_per_section
-    
-    # Enhanced section navigation
-    st.markdown("""
-    <div class="page-selector">
-        <h4>📄 Section Navigation</h4>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    nav_col1, nav_col2, nav_col3 = st.columns([1, 2, 1])
-    
-    with nav_col1:
-        if st.button("⬅️ Previous", disabled=st.session_state.selected_page <= 1, use_container_width=True):
-            st.session_state.selected_page -= 1
-            st.rerun()
-    
-    with nav_col2:
-        selected_section = st.selectbox(
-            "📄 Go to section:",
-            range(1, total_sections + 1),
-            index=st.session_state.selected_page - 1,
-            key="docx_section_selector",
-            help=f"Select a section to view (1-{total_sections})"
-        )
-        
-        if selected_section != st.session_state.selected_page:
-            st.session_state.selected_page = selected_section
-            st.rerun()
-    
-    with nav_col3:
-        if st.button("Next ➡️", disabled=st.session_state.selected_page >= total_sections, use_container_width=True):
-            st.session_state.selected_page += 1
-            st.rerun()
-    
-    # Show current section content
-    start_idx = (st.session_state.selected_page - 1) * paragraphs_per_section
-    end_idx = min(start_idx + paragraphs_per_section, len(paragraphs))
-    current_paragraphs = paragraphs[start_idx:end_idx]
-    
-    st.markdown(f"""
-    <div class="page-info">
-        <h4>📄 Section {st.session_state.selected_page} of {total_sections}</h4>
-        <p>Paragraphs {start_idx + 1} - {end_idx}</p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    st.markdown(f"""
-    <div class="page-content">
-        <h3>📄 Section {st.session_state.selected_page} Content</h3>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Show paragraphs
-    for i, paragraph in enumerate(current_paragraphs):
-        para_text = paragraph.get('text', '').strip()
-        if para_text:
-            st.markdown(f"**Paragraph {start_idx + i + 1}:**")
-            st.markdown(f"""
-            <div class="text-content">
-                {para_text.replace('\n', '<br>')}
-            </div>
-            """, unsafe_allow_html=True)
-    
-    # Show tables if enabled
-    if show_tables and file_data.get('tables'):
-        st.markdown("#### 📊 Document Tables")
-        for i, table in enumerate(file_data['tables']):
-            st.markdown(f"**Table {i+1}**")
-            try:
-                if table.get('data'):
-                    df = pd.DataFrame(table['data'])
-                    st.dataframe(df, use_container_width=True)
-            except Exception as e:
-                st.error(f"Error displaying table: {str(e)}")
-
-def show_pptx_content(file_data, show_images, show_tables):
-    """Show PowerPoint content with enhanced slide navigation"""
-    st.markdown("### 🎞️ PowerPoint Content")
-    
-    slides = file_data.get('slides', [])
-    if not slides:
-        st.warning("No slides found in this presentation.")
-        return
-    
-    total_slides = len(slides)
-    
-    # Enhanced slide navigation
-    st.markdown("""
-    <div class="page-selector">
-        <h4>🎞️ Slide Navigation</h4>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    nav_col1, nav_col2, nav_col3 = st.columns([1, 2, 1])
-    
-    with nav_col1:
-        if st.button("⬅️ Previous", disabled=st.session_state.selected_page <= 1, use_container_width=True):
-            st.session_state.selected_page -= 1
-            st.rerun()
-    
-    with nav_col2:
-        selected_slide = st.selectbox(
-            "🎞️ Go to slide:",
-            range(1, total_slides + 1),
-            index=st.session_state.selected_page - 1,
-            key="pptx_slide_selector",
-            help=f"Select a slide to view (1-{total_slides})"
-        )
-        
-        if selected_slide != st.session_state.selected_page:
-            st.session_state.selected_page = selected_slide
-            st.rerun()
-    
-    with nav_col3:
-        if st.button("Next ➡️", disabled=st.session_state.selected_page >= total_slides, use_container_width=True):
-            st.session_state.selected_page += 1
-            st.rerun()
-    
-    # Show current slide content
-    current_slide = slides[st.session_state.selected_page - 1]
-    
-    st.markdown(f"""
-    <div class="page-info">
-        <h4>🎞️ Slide {st.session_state.selected_page} of {total_slides}</h4>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    st.markdown(f"""
-    <div class="slide-content">
-        <h3>🎞️ Slide {current_slide.get('slide_number', st.session_state.selected_page)}</h3>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Show slide title
-    slide_title = current_slide.get('title', '').strip()
-    if slide_title:
-        st.markdown(f"### {slide_title}")
-    
-    # Show slide content
-    slide_content = current_slide.get('content', '').strip()
-    if slide_content:
-        st.markdown("#### 📝 Content")
-        st.markdown(f"""
-        <div class="text-content">
-            {slide_content.replace('\n', '<br>')}
-        </div>
-        """, unsafe_allow_html=True)
-    
-    # Show notes if available
-    notes = current_slide.get('notes', '').strip()
-    if notes:
-        st.markdown("#### 📋 Speaker Notes")
-        st.markdown(f"""
-        <div class="content-section">
-            {notes.replace('\n', '<br>')}
-        </div>
-        """, unsafe_allow_html=True)
-    
-    # Show tables if enabled
-    if show_tables and current_slide.get('tables'):
-        st.markdown("#### 📊 Tables")
-        for i, table in enumerate(current_slide['tables']):
-            st.markdown(f"**Table {i+1}**")
-            try:
-                if table.get('data'):
-                    df = pd.DataFrame(table['data'])
-                    st.dataframe(df, use_container_width=True)
-            except Exception as e:
-                st.error(f"Error displaying table: {str(e)}")
-
-def show_excel_content(file_data, show_tables):
-    """Show Excel content with enhanced sheet navigation"""
-    st.markdown("### 📊 Excel Content")
-    
-    sheets = file_data.get('sheets', [])
-    if not sheets:
-        st.warning("No sheets found in this Excel file.")
-        return
-    
-    # Enhanced sheet selector
-    st.markdown("""
-    <div class="page-selector">
-        <h4>📊 Sheet Navigation</h4>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    sheet_names = [sheet['name'] for sheet in sheets]
-    selected_sheet_name = st.selectbox(
-        "📋 Select a sheet:",
-        sheet_names,
-        key="excel_sheet_selector",
-        help="Choose a sheet to view its content"
+    # File upload section
+    st.markdown("## 📤 Upload Files")
+    uploaded_files = st.file_uploader(
+        "Upload documents to process (PDF, DOCX, PPTX, XLSX)",
+        type=['pdf', 'docx', 'pptx', 'xlsx', 'xls'],
+        accept_multiple_files=True
     )
     
-    # Find selected sheet
-    selected_sheet = None
-    for sheet in sheets:
-        if sheet['name'] == selected_sheet_name:
-            selected_sheet = sheet
-            break
-    
-    if selected_sheet:
-        st.markdown(f"""
-        <div class="page-info">
-            <h4>📊 Sheet: {selected_sheet['name']}</h4>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        st.markdown(f"""
-        <div class="page-content">
-            <h3>📊 Sheet: {selected_sheet['name']}</h3>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Show sheet info
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Rows", selected_sheet.get('rows', 0))
-        with col2:
-            st.metric("Columns", selected_sheet.get('columns', 0))
-        with col3:
-            st.metric("Data Points", selected_sheet.get('rows', 0) * selected_sheet.get('columns', 0))
-        
-        # Show sheet data
-        if show_tables and selected_sheet.get('data'):
-            st.markdown("#### 📈 Data")
-            try:
-                df = pd.DataFrame(selected_sheet['data'])
-                
-                # Add pagination for large datasets
-                if len(df) > 100:
-                    st.info(f"Showing first 100 rows of {len(df)} total rows")
-                    st.dataframe(df.head(100), use_container_width=True)
-                    
-                    # Show data summary
-                    st.markdown("#### 📊 Data Summary")
-                    st.write(df.describe())
-                else:
-                    st.dataframe(df, use_container_width=True)
-                    
-                    # Show data info
-                    st.markdown("#### 📊 Data Info")
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.write("**Data Types:**")
-                        st.write(df.dtypes)
-                    with col2:
-                        st.write("**Statistics:**")
-                        st.write(df.describe())
-                
-            except Exception as e:
-                st.error(f"Error displaying sheet data: {str(e)}")
-        else:
-            st.info("No data available for this sheet.")
-
-def process_documents(uploaded_files):
-    """Process uploaded documents"""
-    # Create a temporary directory to store uploaded files
-    with tempfile.TemporaryDirectory() as temp_dir:
-        results = {}
-        stats = {
-            'total_files': len(uploaded_files),
-            'processed_files': 0,
-            'total_pages': 0,
-            'total_words': 0,
-            'total_tables': 0,
-            'total_images': 0,
-            'start_time': datetime.now(),
-            'file_types': {}
-        }
-        
-        # Initialize progress bar
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        # Process each file
-        for i, uploaded_file in enumerate(uploaded_files):
-            try:
+    if uploaded_files and not st.session_state.processing_complete:
+        # Save uploaded files to temporary directory
+        with tempfile.TemporaryDirectory() as temp_dir:
+            file_paths = []
+            for uploaded_file in uploaded_files:
                 file_path = os.path.join(temp_dir, uploaded_file.name)
                 with open(file_path, "wb") as f:
                     f.write(uploaded_file.getbuffer())
-                
-                # Update status
-                progress = (i + 1) / len(uploaded_files)
-                progress_bar.progress(progress)
-                status_text.text(f"Processing {i+1}/{len(uploaded_files)}: {uploaded_file.name}")
-                
-                # Process the file
-                extractor = ComprehensiveDocumentExtractor(file_path)
-                file_data = extractor.extract_all()
-                
-                # Update statistics
-                stats['processed_files'] += 1
-                stats['total_pages'] += file_data.get('page_count', 1)
-                stats['total_words'] += file_data.get('word_count', 0)
-                stats['total_tables'] += len(file_data.get('tables', []))
-                stats['total_images'] += len(file_data.get('images', []))
-                
-                # Track file types
-                file_type = file_data.get('file_type', 'Unknown')
-                if file_type not in stats['file_types']:
-                    stats['file_types'][file_type] = 0
-                stats['file_types'][file_type] += 1
-                
-                # Store results
-                results[uploaded_file.name] = file_data
-                
-                st.success(f"Processed: {uploaded_file.name}")
+                file_paths.append(file_path)
             
-            except Exception as e:
-                st.error(f"Error processing {uploaded_file.name}: {str(e)}")
-                continue
+            # Process files
+            if st.button("🚀 Process Files", use_container_width=True):
+                with st.spinner("Processing files..."):
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    
+                    # Initialize extractor
+                    extractor = ComprehensiveDocumentExtractor()
+                    
+                    # Record start time
+                    start_time = datetime.now()
+                    
+                    # Process files
+                    results = extractor.process_files(file_paths)
+                    
+                    # Record processing time
+                    processing_time = (datetime.now() - start_time).total_seconds()
+                    
+                    if results:
+                        # Generate statistics
+                        stats = {
+                            'total_files': len(results),
+                            'processed_files': len(results),
+                            'processing_time': processing_time,
+                            'start_time': start_time,
+                            'end_time': datetime.now(),
+                            'total_pages': sum(data.get('page_count', 1) for data in results.values()),
+                            'total_words': sum(data.get('total_words', 0) for data in results.values()),
+                            'total_tables': sum(len(data.get('extracted_tables', [])) for data in results.values()),
+                            'total_images': sum(data.get('total_images', 0) for data in results.values()),
+                            'file_types': Counter(data['file_type'] for data in results.values())
+                        }
+                        
+                        # Update session state
+                        st.session_state.processing_complete = True
+                        st.session_state.results = results
+                        st.session_state.stats = stats
+                        
+                        # Show completion message
+                        progress_bar.empty()
+                        status_text.empty()
+                        st.success("✅ All files processed successfully!")
+                        st.rerun()
+                    else:
+                        st.error("❌ No files were successfully processed.")
+
+    # Show results if processing is complete
+    if st.session_state.processing_complete:
+        st.markdown("## 📊 Processing Results")
         
-        # Finalize stats
-        stats['end_time'] = datetime.now()
-        stats['processing_time'] = (stats['end_time'] - stats['start_time']).total_seconds()
+        # Display statistics
+        st.markdown("### 📈 Summary Statistics")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Files", st.session_state.stats['total_files'])
+            st.metric("Total Pages", st.session_state.stats['total_pages'])
+        with col2:
+            st.metric("Total Words", f"{st.session_state.stats['total_words']:,}")
+            st.metric("Total Tables", st.session_state.stats['total_tables'])
+        with col3:
+            st.metric("Total Images", st.session_state.stats['total_images'])
+            st.metric("Processing Time", f"{st.session_state.stats['processing_time']:.2f} sec")
         
-        # Update session state
-                # Update session state
-        st.session_state.processing_complete = True
-        st.session_state.results = results
-        st.session_state.stats = stats
+        # File type distribution
+        st.markdown("### 📁 File Type Distribution")
+        file_types = st.session_state.stats['file_types']
+        st.bar_chart(file_types)
         
-        # Show completion message
-        progress_bar.empty()
-        status_text.empty()
-        st.success("✅ All files processed successfully!")
-        st.rerun()
+        # Create download section
+        create_download_section(st.session_state.results, st.session_state.stats)
+        
+        # Add reset button
+        add_reset_button()
 
 def create_download_section(results, stats):
     """Create the download section for processed files"""
@@ -835,7 +136,7 @@ def create_download_section(results, stats):
                 "total_words": stats['total_words'],
                 "total_tables": stats['total_tables'],
                 "total_images": stats['total_images'],
-                "file_types": stats['file_types']
+                "file_types": dict(stats['file_types'])
             }
         }
         
@@ -872,7 +173,7 @@ def create_download_section(results, stats):
         json_str = json.dumps(file_data, indent=2)
         
         st.download_button(
-            label=f"⬇️ Download {filename} (JSON)",
+            label=f"⬇️ Download {Path(filename).name} (JSON)",
             data=json_str,
             file_name=f"{Path(filename).stem}.json",
             mime="application/json",
@@ -886,9 +187,8 @@ def add_reset_button():
         st.session_state.processing_complete = False
         st.session_state.results = None
         st.session_state.stats = None
-        st.session_state.selected_file = None
-        st.session_state.selected_page = 1
         st.rerun()
 
 if __name__ == "__main__":
+    from collections import Counter  # Import needed for file_types counter
     main()
