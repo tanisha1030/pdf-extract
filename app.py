@@ -19,7 +19,7 @@ st.set_page_config(
     page_title="Document Extractor Pro",
     page_icon="📄",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
 # Custom CSS for better styling
@@ -69,6 +69,14 @@ st.markdown("""
     .stProgress > div > div > div > div {
         background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
     }
+    
+    .feature-info {
+        background: #f8f9fa;
+        padding: 1rem;
+        border-radius: 8px;
+        border-left: 4px solid #667eea;
+        margin-bottom: 1rem;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -80,6 +88,19 @@ if 'processing_complete' not in st.session_state:
 if 'uploaded_files' not in st.session_state:
     st.session_state.uploaded_files = []
 
+# Default processing options
+DEFAULT_OPTIONS = {
+    'extract_images': True,
+    'extract_tables': True,
+    'extract_metadata': True,
+    'use_tabula': True,
+    'use_camelot': True,
+    'use_pdfplumber': True,
+    'save_as_json': True,
+    'save_as_csv': True,
+    'create_summary': True
+}
+
 def main():
     # Header
     st.markdown("""
@@ -89,43 +110,40 @@ def main():
     </div>
     """, unsafe_allow_html=True)
     
-    # Sidebar
-    with st.sidebar:
-        st.header("📋 Features")
-        st.markdown("""
-        **Supported Formats:**
-        - 📄 PDF files
-        - 📝 DOCX documents
-        - 📊 PowerPoint (PPTX)
-        - 📈 Excel (XLSX/XLS)
-        
-        **Extraction Capabilities:**
-        - 📝 Text content with formatting
-        - 📊 Tables (multiple methods)
-        - 🖼️ Images and graphics
-        - 📋 Metadata information
-        - 🔤 Font information
-        - 📊 Statistics and analytics
-        """)
-        
-        st.header("⚙️ Settings")
-        
-        # Processing options
-        extract_images = st.checkbox("Extract Images", value=True)
-        extract_tables = st.checkbox("Extract Tables", value=True)
-        extract_metadata = st.checkbox("Extract Metadata", value=True)
-        
-        # Table extraction methods
-        st.subheader("Table Extraction Methods")
-        use_tabula = st.checkbox("Use Tabula", value=True, help="Best for structured tables")
-        use_camelot = st.checkbox("Use Camelot", value=True, help="Best for lattice tables")
-        use_pdfplumber = st.checkbox("Use PDFplumber", value=True, help="General purpose")
-        
-        # Output options
-        st.subheader("Output Options")
-        save_as_json = st.checkbox("Save as JSON", value=True)
-        save_as_csv = st.checkbox("Save tables as CSV", value=True)
-        create_summary = st.checkbox("Create summary report", value=True)
+    # Features info
+    st.markdown("""
+    <div class="feature-info">
+        <h3>🚀 Automatic Processing Features</h3>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem; margin-top: 1rem;">
+            <div>
+                <strong>📄 Supported Formats:</strong>
+                <ul>
+                    <li>PDF files</li>
+                    <li>DOCX documents</li>
+                    <li>PowerPoint (PPTX)</li>
+                    <li>Excel (XLSX/XLS)</li>
+                </ul>
+            </div>
+            <div>
+                <strong>🔧 Extraction Capabilities:</strong>
+                <ul>
+                    <li>Text content with formatting</li>
+                    <li>Tables (multiple methods)</li>
+                    <li>Images and graphics</li>
+                    <li>Metadata information</li>
+                </ul>
+            </div>
+            <div>
+                <strong>📊 Table Extraction Methods:</strong>
+                <ul>
+                    <li>Tabula (structured tables)</li>
+                    <li>Camelot (lattice tables)</li>
+                    <li>PDFplumber (general purpose)</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
     
     # Main content area
     col1, col2 = st.columns([2, 1])
@@ -152,17 +170,7 @@ def main():
             
             # Process button
             if st.button("🚀 Start Processing", type="primary", use_container_width=True):
-                process_documents(uploaded_files, {
-                    'extract_images': extract_images,
-                    'extract_tables': extract_tables,
-                    'extract_metadata': extract_metadata,
-                    'use_tabula': use_tabula,
-                    'use_camelot': use_camelot,
-                    'use_pdfplumber': use_pdfplumber,
-                    'save_as_json': save_as_json,
-                    'save_as_csv': save_as_csv,
-                    'create_summary': create_summary
-                })
+                process_documents(uploaded_files, DEFAULT_OPTIONS)
     
     with col2:
         st.header("📊 Processing Status")
