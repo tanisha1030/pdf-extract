@@ -188,14 +188,6 @@ def main():
                     <li>Metadata information</li>
                 </ul>
             </div>
-            <div>
-                <strong>📊 Table Extraction Methods:</strong>
-                <ul>
-                    <li>Tabula (structured tables)</li>
-                    <li>Camelot (lattice tables)</li>
-                    <li>PDFplumber (general purpose)</li>
-                </ul>
-            </div>
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -374,7 +366,6 @@ def display_page_content(file_name, data, selected_page):
         st.markdown("**📊 Page Statistics:**")
         st.write(f"• **Characters:** {len(page_text):,}")
         st.write(f"• **Words:** {len(page_text.split()) if page_text else 0:,}")
-        st.write(f"• **Lines:** {page_text.count(chr(10)) + 1 if page_text else 0}")
         st.write(f"• **Images:** {len(page_data.get('images', []))}")
         
         # Page-specific tables
