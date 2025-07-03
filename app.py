@@ -10,9 +10,211 @@ from datetime import datetime
 from pathlib import Path
 import io
 import base64
+from typing import Dict, List, Optional, Union
+import pdfplumber
+from docx import Document
+from pptx import Presentation
+import openpyxl
 
-# Import your existing extractor class
-from pdfextract import ComprehensiveDocumentExtractor
+class ComprehensiveDocumentExtractor:
+    """A class to extract content from various document formats."""
+    
+    def extract_all(self, file_path: str) -> Dict:
+        """Extract all content from a document based on its file type."""
+        file_ext = os.path.splitext(file_path)[1].lower()
+        
+        if file_ext == '.pdf':
+            return self._extract_pdf(file_path)
+        elif file_ext == '.docx':
+            return self._extract_docx(file_path)
+        elif file_ext == '.pptx':
+            return self._extract_pptx(file_path)
+        elif file_ext in ('.xlsx', '.xls'):
+            return self._extract_excel(file_path)
+        else:
+            raise ValueError(f"Unsupported file type: {file_ext}")
+    
+    def _extract_pdf(self, file_path: str) -> Dict:
+        """Extract content from a PDF file."""
+        result = {
+            'filename': os.path.basename(file_path),
+            'file_type': 'PDF',
+            'file_size_mb': os.path.getsize(file_path) / (1024 * 1024),
+            'pages': [],
+            'tables': [],
+            'metadata': {},
+            'page_count': 0,
+            'word_count': 0
+        }
+        
+        try:
+            with pdfplumber.open(file_path) as pdf:
+                result['page_count'] = len(pdf.pages)
+                
+                for i, page in enumerate(pdf.pages):
+                    page_data = {
+                        'page_number': i + 1,
+                        'text': page.extract_text() or '',
+                        'tables': []
+                    }
+                    
+                    # Extract tables
+                    tables = page.extract_tables()
+                    for table in tables:
+                        page_data['tables'].append({'data': table})
+                        result['tables'].append({'data': table})
+                    
+                    # Count words
+                    word_count = len(page_data['text'].split())
+                    result['word_count'] += word_count
+                    
+                    result['pages'].append(page_data)
+                
+                # Extract metadata
+                if hasattr(pdf, 'metadata'):
+                    result['metadata'] = dict(pdf.metadata)
+                
+            return result
+        except Exception as e:
+            raise Exception(f"Error processing PDF: {str(e)}")
+    
+    def _extract_docx(self, file_path: str) -> Dict:
+        """Extract content from a DOCX file."""
+        result = {
+            'filename': os.path.basename(file_path),
+            'file_type': 'DOCX',
+            'file_size_mb': os.path.getsize(file_path) / (1024 * 1024),
+            'paragraphs': [],
+            'tables': [],
+            'page_count': 1,  # DOCX doesn't have pages in the same way as PDF
+            'word_count': 0
+        }
+        
+        try:
+            doc = Document(file_path)
+            
+            # Extract paragraphs
+            for para in doc.paragraphs:
+                text = para.text.strip()
+                if text:
+                    result['paragraphs'].append({
+                        'text': text,
+                        'style': para.style.name
+                    })
+                    result['word_count'] += len(text.split())
+            
+            # Extract tables
+            for table in doc.tables:
+                table_data = []
+                for row in table.rows:
+                    row_data = []
+                    for cell in row.cells:
+                        row_data.append(cell.text.strip())
+                    table_data.append(row_data)
+                
+                result['tables'].append({'data': table_data})
+            
+            return result
+        except Exception as e:
+            raise Exception(f"Error processing DOCX: {str(e)}")
+    
+    def _extract_pptx(self, file_path: str) -> Dict:
+        """Extract content from a PPTX file."""
+        result = {
+            'filename': os.path.basename(file_path),
+            'file_type': 'PPTX',
+            'file_size_mb': os.path.getsize(file_path) / (1024 * 1024),
+            'slides': [],
+            'tables': [],
+            'slide_count': 0,
+            'word_count': 0
+        }
+        
+        try:
+            prs = Presentation(file_path)
+            result['slide_count'] = len(prs.slides)
+            
+            for i, slide in enumerate(prs.slides):
+                slide_data = {
+                    'slide_number': i + 1,
+                    'title': '',
+                    'content': '',
+                    'notes': '',
+                    'tables': []
+                }
+                
+                # Extract title and content
+                for shape in slide.shapes:
+                    if hasattr(shape, 'text'):
+                        text = shape.text.strip()
+                        if not text:
+                            continue
+                        
+                        if shape == slide.shapes.title:
+                            slide_data['title'] = text
+                        else:
+                            slide_data['content'] += text + '\n'
+                
+                # Extract notes
+                notes_slide = slide.notes_slide
+                if notes_slide and notes_slide.notes_text_frame:
+                    slide_data['notes'] = notes_slide.notes_text_frame.text.strip()
+                
+                # Extract tables (simplified)
+                for shape in slide.shapes:
+                    if shape.has_table:
+                        table_data = []
+                        for row in shape.table.rows:
+                            row_data = []
+                            for cell in row.cells:
+                                row_data.append(cell.text_frame.text.strip())
+                            table_data.append(row_data)
+                        
+                        slide_data['tables'].append({'data': table_data})
+                        result['tables'].append({'data': table_data})
+                
+                # Count words
+                word_count = len(slide_data['content'].split()) + len(slide_data['notes'].split())
+                result['word_count'] += word_count
+                
+                result['slides'].append(slide_data)
+            
+            return result
+        except Exception as e:
+            raise Exception(f"Error processing PPTX: {str(e)}")
+    
+    def _extract_excel(self, file_path: str) -> Dict:
+        """Extract content from an Excel file."""
+        result = {
+            'filename': os.path.basename(file_path),
+            'file_type': 'Excel',
+            'file_size_mb': os.path.getsize(file_path) / (1024 * 1024),
+            'sheets': [],
+            'sheet_count': 0
+        }
+        
+        try:
+            wb = openpyxl.load_workbook(file_path, data_only=True)
+            result['sheet_count'] = len(wb.sheetnames)
+            
+            for sheet_name in wb.sheetnames:
+                sheet = wb[sheet_name]
+                sheet_data = {
+                    'name': sheet_name,
+                    'rows': sheet.max_row,
+                    'columns': sheet.max_column,
+                    'data': []
+                }
+                
+                # Extract data (limited to first 100 rows for performance)
+                for row in sheet.iter_rows(values_only=True):
+                    sheet_data['data'].append(list(row))
+                
+                result['sheets'].append(sheet_data)
+            
+            return result
+        except Exception as e:
+            raise Exception(f"Error processing Excel: {str(e)}")
 
 # Page configuration
 st.set_page_config(
@@ -315,7 +517,7 @@ def show_content_viewer(results):
             if file_data:
                 st.markdown("### 📊 File Stats")
                 st.metric("Type", file_data['file_type'])
-                st.metric("Words", f"{file_data.get('total_words', 0):,}")
+                st.metric("Words", f"{file_data.get('word_count', 0):,}")
                 st.metric("Size", f"{file_data.get('file_size_mb', 0):.2f} MB")
     
     if selected_file:
@@ -835,41 +1037,101 @@ def create_download_section(results, stats):
             
             zipf.write(stats_path, stats_filename)
         
-        # Create download button
-        with open(zip_path, 'rb') as f:
-            zip_data = f.read()
-        
-        st.download_button(
-            label="📥 Download All Results (ZIP)",
-            data=zip_data,
-            file_name="extraction_results.zip",
-            mime="application/zip",
-            use_container_width=True
-        )
-    
-    # Individual file download options
-    st.markdown("### 📤 Download Individual Files")
-    
-    for filename, data in results.items():
-        col1, col2 = st.columns([3, 1])
+        # Create download buttons
+        col1, col2 = st.columns(2)
         
         with col1:
-            st.markdown(f"**{filename}**")
-            st.caption(f"Type: {data.get('file_type', 'Unknown')} | Pages: {data.get('page_count', 1)}")
+            # Download all results as ZIP
+            with open(zip_path, 'rb') as f:
+                zip_data = f.read()
+            
+            st.download_button(
+                label="📦 Download All Results (ZIP)",
+                data=zip_data,
+                file_name="document_extraction_results.zip",
+                mime="application/zip",
+                help="Download all extracted content as a ZIP file containing JSON files"
+            )
         
         with col2:
-            json_str = json.dumps(data, indent=2)
+            # Download summary report
+            summary_report = generate_summary_report(results, stats)
+            
             st.download_button(
-                label="⬇️ JSON",
-                data=json_str,
-                file_name=f"{Path(filename).stem}_results.json",
-                mime="application/json",
-                key=f"json_{filename}"
+                label="📄 Download Summary Report (TXT)",
+                data=summary_report,
+                file_name="extraction_summary.txt",
+                mime="text/plain",
+                help="Download a text summary of the extraction results"
             )
+        
+        # Individual file downloads
+        st.markdown("### 📂 Download Individual Files")
+        selected_file = st.selectbox(
+            "Select a file to download:",
+            list(results.keys()),
+            key="download_file_selector"
+        )
+        
+        if selected_file:
+            file_data = results[selected_file]
+            json_data = json.dumps(file_data, indent=2).encode('utf-8')
+            
+            st.download_button(
+                label=f"⬇️ Download {selected_file} Results (JSON)",
+                data=json_data,
+                file_name=f"{Path(selected_file).stem}_results.json",
+                mime="application/json",
+                key=f"download_{selected_file}"
+            )
+
+def generate_summary_report(results, stats):
+    """Generate a text summary report of the extraction"""
+    report = io.StringIO()
+    
+    report.write("=== DOCUMENT EXTRACTION SUMMARY REPORT ===\n\n")
+    report.write(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+    report.write(f"Total processing time: {stats.get('processing_time', 0):.2f} seconds\n")
+    report.write(f"Files processed: {stats.get('processed_files', 0)}/{stats.get('total_files', 0)}\n\n")
+    
+    # File type breakdown
+    report.write("=== FILE TYPE BREAKDOWN ===\n")
+    for file_type, count in stats.get('file_types', {}).items():
+        report.write(f"{file_type}: {count} files\n")
+    
+    # Overall statistics
+    report.write("\n=== OVERALL STATISTICS ===\n")
+    report.write(f"Total pages extracted: {stats.get('total_pages', 0)}\n")
+    report.write(f"Total words extracted: {stats.get('total_words', 0)}\n")
+    report.write(f"Total tables extracted: {stats.get('total_tables', 0)}\n\n")
+    
+    # Per-file details
+    report.write("=== FILE DETAILS ===\n")
+    for filename, data in results.items():
+        report.write(f"\nFile: {filename}\n")
+        report.write(f"Type: {data.get('file_type', 'Unknown')}\n")
+        report.write(f"Size: {data.get('file_size_mb', 0):.2f} MB\n")
+        
+        if data['file_type'] == 'PDF':
+            report.write(f"Pages: {data.get('page_count', 0)}\n")
+            report.write(f"Words: {data.get('word_count', 0)}\n")
+            report.write(f"Tables: {len(data.get('tables', []))}\n")
+        elif data['file_type'] == 'DOCX':
+            report.write(f"Paragraphs: {len(data.get('paragraphs', []))}\n")
+            report.write(f"Words: {data.get('word_count', 0)}\n")
+            report.write(f"Tables: {len(data.get('tables', []))}\n")
+        elif data['file_type'] == 'PPTX':
+            report.write(f"Slides: {data.get('slide_count', 0)}\n")
+            report.write(f"Words: {data.get('word_count', 0)}\n")
+            report.write(f"Tables: {len(data.get('tables', []))}\n")
+        elif data['file_type'] == 'Excel':
+            report.write(f"Sheets: {data.get('sheet_count', 0)}\n")
+    
+    return report.getvalue()
 
 def add_reset_button():
     """Add a reset button to clear session state"""
-    if st.button("🔄 Reset Application", use_container_width=True):
+    if st.sidebar.button("🔄 Reset Application", help="Clear all processed data and start fresh"):
         st.session_state.processing_complete = False
         st.session_state.results = None
         st.session_state.stats = None
