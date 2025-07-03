@@ -92,14 +92,12 @@ st.markdown("""
         padding: 0.5rem;
         background: white;
         box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        width: 300px;
     }
     
     .image-card img {
-        max-width: 100%;
+        max-width: 300px;
         max-height: 300px;
         border-radius: 4px;
-        object-fit: contain;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -451,57 +449,33 @@ def display_results(results):
                             if images:
                                 st.write(f"**Page {page['page_number']}:** {len(images)} images")
                                 
-                                # Create columns for image display
-                                cols = st.columns(3)  # 3 images per row
-                                col_index = 0
+                                # Display images in a grid
+                                st.markdown('<div class="image-container">', unsafe_allow_html=True)
                                 
                                 for img in images:
                                     try:
+                                        # Check if image data is available
                                         if 'image_data' in img:
-                                            # Decode base64 image data
-                                            image_bytes = base64.b64decode(img['image_data'])
-                                            image = Image.open(BytesIO(image_bytes))
-                                            
-                                            # Display image in current column
-                                            with cols[col_index]:
-                                                st.image(image, caption=f"Image {img.get('index', '')}", use_column_width=True)
-                                                st.write(f"**Dimensions:** {img['width']}×{img['height']}")
-                                                st.write(f"**Size:** {img['size_bytes']} bytes")
-                                                st.write(f"**Format:** {img.get('format', 'unknown')}")
-                                            
-                                            # Move to next column
-                                            col_index = (col_index + 1) % 3
-                                            if col_index == 0:
-                                                cols = st.columns(3)  # New row after 3 images
+                                            # Display the image
+                                            st.markdown(f"""
+                                            <div class="image-card">
+                                                <img src="data:image/png;base64,{img['image_data']}">
+                                                <p><strong>{os.path.basename(img['filename'])}</strong></p>
+                                                <p>Size: {img['width']}×{img['height']}</p>
+                                                <p>Color: {img['colorspace']}</p>
+                                                <p>File size: {img['size_bytes']} bytes</p>
+                                            </div>
+                                            """, unsafe_allow_html=True)
+                                        else:
+                                            # Fallback to just showing image info
+                                            st.write(f"📸 {os.path.basename(img['filename'])}")
+                                            st.write(f"Size: {img['width']}×{img['height']}")
+                                            st.write(f"Color: {img['colorspace']}")
+                                            st.write(f"File size: {img['size_bytes']} bytes")
                                     except Exception as e:
                                         st.error(f"Error displaying image: {str(e)}")
-                    else:
-                        # For non-PDF files
-                        images = data.get('images', [])
-                        if images:
-                            cols = st.columns(3)  # 3 images per row
-                            col_index = 0
-                            
-                            for img in images:
-                                try:
-                                    if 'image_data' in img:
-                                        # Decode base64 image data
-                                        image_bytes = base64.b64decode(img['image_data'])
-                                        image = Image.open(BytesIO(image_bytes))
-                                        
-                                        # Display image in current column
-                                        with cols[col_index]:
-                                            st.image(image, caption=f"Image {img.get('index', '')}", use_column_width=True)
-                                            st.write(f"**Dimensions:** {img.get('width', 'unknown')}×{img.get('height', 'unknown')}")
-                                            st.write(f"**Size:** {img.get('size_bytes', 'unknown')} bytes")
-                                            st.write(f"**Format:** {img.get('format', 'unknown')}")
-                                        
-                                        # Move to next column
-                                        col_index = (col_index + 1) % 3
-                                        if col_index == 0:
-                                            cols = st.columns(3)  # New row after 3 images
-                                except Exception as e:
-                                    st.error(f"Error displaying image: {str(e)}")
+                                
+                                st.markdown('</div>', unsafe_allow_html=True)
         else:
             st.info("No images were extracted from the uploaded documents.")
     
