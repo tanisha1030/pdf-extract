@@ -529,7 +529,7 @@ def display_results(results):
                                 if 'accuracy' in table:
                                     st.write(f"**Accuracy:** {table['accuracy']:.1f}%")
                             
-                            # Show table data
+                            # Show table data with improved error handling
                             try:
                                 if table.get('data'):
                                     if isinstance(table['data'], list) and isinstance(table['data'][0], dict):
@@ -539,7 +539,22 @@ def display_results(results):
                                     elif isinstance(table['data'], list):
                                         # List of lists format
                                         if table['data']:
-                                            df = pd.DataFrame(table['data'][1:], columns=table['data'][0] if table['data'] else [])
+                                            # Clean column names to avoid duplicates
+                                            headers = table['data'][0] if table['data'] else []
+                                            if headers:
+                                                # Generate unique column names if duplicates exist
+                                                seen = {}
+                                                new_headers = []
+                                                for h in headers:
+                                                    if h in seen:
+                                                        seen[h] += 1
+                                                        new_headers.append(f"{h}_{seen[h]}")
+                                                    else:
+                                                        seen[h] = 0
+                                                        new_headers.append(h)
+                                                headers = new_headers
+                                            
+                                            df = pd.DataFrame(table['data'][1:], columns=headers)
                                             st.dataframe(df, use_container_width=True)
                                     else:
                                         st.write("Table data format not recognized")
@@ -690,7 +705,21 @@ def display_results(results):
                                     if isinstance(table['data'], list) and isinstance(table['data'][0], dict):
                                         df = pd.DataFrame(table['data'])
                                     elif isinstance(table['data'], list):
-                                        df = pd.DataFrame(table['data'][1:], columns=table['data'][0] if table['data'] else [])
+                                        # Clean column names for CSV export
+                                        headers = table['data'][0] if table['data'] else []
+                                        if headers:
+                                            seen = {}
+                                            new_headers = []
+                                            for h in headers:
+                                                if h in seen:
+                                                    seen[h] += 1
+                                                    new_headers.append(f"{h}_{seen[h]}")
+                                                else:
+                                                    seen[h] = 0
+                                                    new_headers.append(h)
+                                            headers = new_headers
+                                        
+                                        df = pd.DataFrame(table['data'][1:], columns=headers)
                                     else:
                                         continue
                                     
