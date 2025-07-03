@@ -10,7 +10,6 @@ from io import BytesIO
 import base64
 import time
 from collections import Counter
-from PIL import Image
 
 # Import the extractor class
 from pdfextract import ComprehensiveDocumentExtractor
@@ -78,27 +77,6 @@ st.markdown("""
         border-left: 4px solid #667eea;
         margin-bottom: 1rem;
     }
-    
-    .image-container {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 1rem;
-        margin-top: 1rem;
-    }
-    
-    .image-card {
-        border: 1px solid #ddd;
-        border-radius: 8px;
-        padding: 0.5rem;
-        background: white;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    }
-    
-    .image-card img {
-        max-width: 300px;
-        max-height: 300px;
-        border-radius: 4px;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -109,8 +87,6 @@ if 'processing_complete' not in st.session_state:
     st.session_state.processing_complete = False
 if 'uploaded_files' not in st.session_state:
     st.session_state.uploaded_files = []
-if 'selected_page' not in st.session_state:
-    st.session_state.selected_page = 1
 
 # Default processing options
 DEFAULT_OPTIONS = {
@@ -358,22 +334,12 @@ def display_results(results):
                         st.write(f"**Sheets:** {len(data.get('sheets', []))}")
                 
                 with col2:
-                    # Page selector for PDF files
+                    # Show text preview
                     if data['file_type'] == 'PDF' and data.get('pages'):
-                        page_count = data.get('page_count', 1)
-                        st.session_state.selected_page = st.selectbox(
-                            "Select page to view",
-                            options=range(1, page_count + 1),
-                            index=st.session_state.selected_page - 1,
-                            key=f"page_select_{file_name}"
-                        )
-                        
-                        # Show text preview for selected page
-                        selected_page_data = data['pages'][st.session_state.selected_page - 1]
-                        page_text = selected_page_data.get('text', '')[:500]
-                        if page_text:
-                            st.write(f"**Page {st.session_state.selected_page} Text Preview:**")
-                            st.text(page_text + "..." if len(page_text) == 500 else page_text)
+                        first_page_text = data['pages'][0].get('text', '')[:500]
+                        if first_page_text:
+                            st.write("**Text Preview:**")
+                            st.text(first_page_text + "..." if len(first_page_text) == 500 else first_page_text)
                     
                     # Show metadata
                     if data.get('metadata'):
@@ -447,35 +413,17 @@ def display_results(results):
                         for page in data.get('pages', []):
                             images = page.get('images', [])
                             if images:
-                                st.write(f"**Page {page['page_number']}:** {len(images)} images")
+                                st.write(f"  Page {page['page_number']}: {len(images)} images")
                                 
-                                # Display images in a grid
-                                st.markdown('<div class="image-container">', unsafe_allow_html=True)
-                                
+                                # Display image information
                                 for img in images:
-                                    try:
-                                        # Check if image data is available
-                                        if 'image_data' in img:
-                                            # Display the image
-                                            st.markdown(f"""
-                                            <div class="image-card">
-                                                <img src="data:image/png;base64,{img['image_data']}">
-                                                <p><strong>{os.path.basename(img['filename'])}</strong></p>
-                                                <p>Size: {img['width']}×{img['height']}</p>
-                                                <p>Color: {img['colorspace']}</p>
-                                                <p>File size: {img['size_bytes']} bytes</p>
-                                            </div>
-                                            """, unsafe_allow_html=True)
-                                        else:
-                                            # Fallback to just showing image info
-                                            st.write(f"📸 {os.path.basename(img['filename'])}")
-                                            st.write(f"Size: {img['width']}×{img['height']}")
-                                            st.write(f"Color: {img['colorspace']}")
-                                            st.write(f"File size: {img['size_bytes']} bytes")
-                                    except Exception as e:
-                                        st.error(f"Error displaying image: {str(e)}")
-                                
-                                st.markdown('</div>', unsafe_allow_html=True)
+                                    col1, col2 = st.columns(2)
+                                    with col1:
+                                        st.write(f"    📸 {os.path.basename(img['filename'])}")
+                                        st.write(f"    Size: {img['width']}×{img['height']}")
+                                    with col2:
+                                        st.write(f"    Color: {img['colorspace']}")
+                                        st.write(f"    File size: {img['size_bytes']} bytes")
         else:
             st.info("No images were extracted from the uploaded documents.")
     
@@ -569,7 +517,6 @@ def display_results(results):
         st.session_state.extraction_results = None
         st.session_state.processing_complete = False
         st.session_state.uploaded_files = []
-        st.session_state.selected_page = 1
         st.rerun()
 
 if __name__ == "__main__":
