@@ -733,8 +733,8 @@ def display_results(results):
                                             st.write(f"**Size:** {img.get('size_bytes', 'N/A')} bytes")
                                             if 'format' in img:
                                                 st.write(f"**Format:** {img['format']}")
-                                    
-                                    st.error(f"Error displaying image: {str(e)}")
+                                   except Exception as e:
+                                        st.error(f"Error displaying image: {str(e)}")
         else:
             st.info("No images were extracted from the uploaded documents.")
     
