@@ -366,7 +366,6 @@ def display_page_content(file_name, data, selected_page):
         st.markdown("**📊 Page Statistics:**")
         st.write(f"• **Characters:** {len(page_text):,}")
         st.write(f"• **Words:** {len(page_text.split()) if page_text else 0:,}")
-        st.write(f"• **Lines:** {page_text.count(chr(10)) + 1 if page_text else 0}")
         st.write(f"• **Images:** {len(page_data.get('images', []))}")
         
         # Page-specific tables
