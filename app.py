@@ -188,14 +188,6 @@ def main():
                     <li>Metadata information</li>
                 </ul>
             </div>
-            <div>
-                <strong>📊 Table Extraction Methods:</strong>
-                <ul>
-                    <li>Tabula (structured tables)</li>
-                    <li>Camelot (lattice tables)</li>
-                    <li>PDFplumber (general purpose)</li>
-                </ul>
-            </div>
         </div>
     </div>
     """, unsafe_allow_html=True)
