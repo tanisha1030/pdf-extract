@@ -786,7 +786,6 @@ def show_excel_content(file_data, show_tables):
                 st.error(f"Error displaying sheet data: {str(e)}")
         else:
             st.info("No data available for this sheet.")
-
 def process_documents(uploaded_files, show_detailed_logs, auto_download):
     """Process uploaded documents"""
     # Create a temporary directory to store uploaded files
@@ -969,4 +968,4 @@ def add_reset_button():
         st.rerun()
 
 if __name__ == "__main__":
-    main()                 
+    main()
