@@ -156,86 +156,6 @@ DEFAULT_OPTIONS = {
     'create_summary': True
 }
 
-def clean_table_data(table_data):
-    """Clean table data to handle duplicate/None column names and formatting issues"""
-    try:
-        if not table_data:
-            return None
-            
-        # Handle different data formats
-        if isinstance(table_data, list) and len(table_data) > 0:
-            # Check if first row contains headers
-            if isinstance(table_data[0], dict):
-                # DataFrame format - already has column names
-                df = pd.DataFrame(table_data)
-            else:
-                # List of lists format
-                if len(table_data) > 1:
-                    headers = table_data[0]
-                    data_rows = table_data[1:]
-                else:
-                    headers = table_data[0] if table_data else []
-                    data_rows = []
-                
-                # Clean headers - handle None values and duplicates
-                cleaned_headers = []
-                header_counts = {}
-                
-                for i, header in enumerate(headers):
-                    if header is None or header == '' or str(header).strip() == '':
-                        clean_header = f"Column_{i+1}"
-                    else:
-                        clean_header = str(header).strip()
-                    
-                    # Handle duplicates
-                    if clean_header in header_counts:
-                        header_counts[clean_header] += 1
-                        clean_header = f"{clean_header}_{header_counts[clean_header]}"
-                    else:
-                        header_counts[clean_header] = 1
-                    
-                    cleaned_headers.append(clean_header)
-                
-                # Ensure we have enough columns for all data
-                max_cols = max(len(row) for row in data_rows) if data_rows else len(cleaned_headers)
-                
-                # Pad headers if needed
-                while len(cleaned_headers) < max_cols:
-                    cleaned_headers.append(f"Column_{len(cleaned_headers)+1}")
-                
-                # Pad data rows if needed
-                padded_data = []
-                for row in data_rows:
-                    padded_row = list(row) + [None] * (max_cols - len(row))
-                    padded_data.append(padded_row[:max_cols])  # Trim if too long
-                
-                # Create DataFrame
-                df = pd.DataFrame(padded_data, columns=cleaned_headers[:max_cols])
-        else:
-            return None
-        
-        # Clean DataFrame - handle any remaining issues
-        if df is not None and not df.empty:
-            # Remove completely empty rows
-            df = df.dropna(how='all')
-            
-            # Remove completely empty columns
-            df = df.dropna(axis=1, how='all')
-            
-            # Convert all data to string for display consistency
-            df = df.astype(str)
-            
-            # Replace 'nan' and 'None' with empty strings for cleaner display
-            df = df.replace(['nan', 'None'], '')
-            
-            return df
-        
-        return None
-        
-    except Exception as e:
-        print(f"Error cleaning table data: {str(e)}")
-        return None
-
 def main():
     # Header
     st.markdown("""
@@ -266,6 +186,14 @@ def main():
                     <li>Tables (multiple methods)</li>
                     <li>Images and graphics</li>
                     <li>Metadata information</li>
+                </ul>
+            </div>
+            <div>
+                <strong>📊 Table Extraction Methods:</strong>
+                <ul>
+                    <li>Tabula (structured tables)</li>
+                    <li>Camelot (lattice tables)</li>
+                    <li>PDFplumber (general purpose)</li>
                 </ul>
             </div>
         </div>
@@ -446,6 +374,7 @@ def display_page_content(file_name, data, selected_page):
         st.markdown("**📊 Page Statistics:**")
         st.write(f"• **Characters:** {len(page_text):,}")
         st.write(f"• **Words:** {len(page_text.split()) if page_text else 0:,}")
+        st.write(f"• **Lines:** {page_text.count(chr(10)) + 1 if page_text else 0}")
         st.write(f"• **Images:** {len(page_data.get('images', []))}")
         
         # Page-specific tables
@@ -609,58 +538,22 @@ def display_results(results):
                                 if 'accuracy' in table:
                                     st.write(f"**Accuracy:** {table['accuracy']:.1f}%")
                             
-                            # Show table data with improved error handling
+                            # Show table data
                             try:
                                 if table.get('data'):
-                                    # Clean the table data
-                                    cleaned_df = clean_table_data(table['data'])
-                                    
-                                    if cleaned_df is not None and not cleaned_df.empty:
-                                        st.dataframe(cleaned_df, use_container_width=True)
-                                        
-                                        # Show additional info
-                                        st.info(f"Table size: {len(cleaned_df)} rows × {len(cleaned_df.columns)} columns")
-                                        
-                                        # Option to download individual table
-                                        csv_data = cleaned_df.to_csv(index=False)
-                                        st.download_button(
-                                            label=f"Download Table {i} as CSV",
-                                            data=csv_data,
-                                            file_name=f"{os.path.splitext(file_name)[0]}_table_{i}.csv",
-                                            mime="text/csv",
-                                            key=f"download_table_{file_name}_{i}"
-                                        )
+                                    if isinstance(table['data'], list) and isinstance(table['data'][0], dict):
+                                        # DataFrame format
+                                        df = pd.DataFrame(table['data'])
+                                        st.dataframe(df, use_container_width=True)
+                                    elif isinstance(table['data'], list):
+                                        # List of lists format
+                                        if table['data']:
+                                            df = pd.DataFrame(table['data'][1:], columns=table['data'][0] if table['data'] else [])
+                                            st.dataframe(df, use_container_width=True)
                                     else:
-                                        st.warning("Table data could not be displayed (empty or invalid format)")
-                                        
-                                        # Show raw data for debugging
-                                        with st.expander("Raw Table Data (Debug)"):
-                                            st.json(table['data'])
-                                else:
-                                    st.warning("No table data available")
-                                    
+                                        st.write("Table data format not recognized")
                             except Exception as e:
                                 st.error(f"Error displaying table: {str(e)}")
-                                
-                                # Show raw data for debugging
-                                with st.expander("Raw Table Data (Debug)"):
-                                    try:
-                                        st.json(table.get('data', 'No data available'))
-                                    except:
-                                        st.text(str(table.get('data', 'No data available')))
-                                
-                                # Try alternative display methods
-                                st.info("Attempting alternative display...")
-                                try:
-                                    table_data = table.get('data', [])
-                                    if isinstance(table_data, list) and table_data:
-                                        st.text("Raw table content:")
-                                        for row_idx, row in enumerate(table_data[:10]):  # Show first 10 rows
-                                            st.text(f"Row {row_idx + 1}: {row}")
-                                        if len(table_data) > 10:
-                                            st.text(f"... and {len(table_data) - 10} more rows")
-                                except:
-                                    st.error("Could not display table in any format")
         else:
             st.info("No tables were extracted from the uploaded documents.")
     
@@ -733,7 +626,8 @@ def display_results(results):
                                             st.write(f"**Size:** {img.get('size_bytes', 'N/A')} bytes")
                                             if 'format' in img:
                                                 st.write(f"**Format:** {img['format']}")
-                                   except Exception as e:
+                                    
+                                    except Exception as e:
                                         st.error(f"Error displaying image: {str(e)}")
         else:
             st.info("No images were extracted from the uploaded documents.")
@@ -741,189 +635,200 @@ def display_results(results):
     with tab5:
         st.subheader("📈 Processing Summary")
         
-        # Create summary statistics
-        st.write("**📊 Overall Statistics:**")
-        
-        # Processing time estimation
-        processing_time = "Processing completed successfully"
-        
-        # Create summary DataFrame
-        summary_data = []
-        for file_name, data in results.items():
-            summary_data.append({
-                'File Name': file_name,
-                'File Type': data['file_type'],
-                'Size (MB)': f"{data.get('file_size_mb', 0):.2f}",
-                'Pages/Slides/Sheets': data.get('page_count', data.get('total_slides', len(data.get('sheets', [])))),
-                'Words': f"{data.get('total_words', 0):,}",
-                'Images': data.get('total_images', 0),
-                'Tables': len(data.get('extracted_tables', [])),
-                'Status': '✅ Success'
-            })
-        
-        summary_df = pd.DataFrame(summary_data)
-        st.dataframe(summary_df, use_container_width=True)
-        
-        # Export options
-        st.subheader("📥 Export Options")
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            # Export summary as CSV
-            csv_data = summary_df.to_csv(index=False)
-            st.download_button(
-                label="📊 Download Summary CSV",
-                data=csv_data,
-                file_name="document_processing_summary.csv",
-                mime="text/csv"
-            )
-        
-        with col2:
-            # Export all extracted text
-            all_text = ""
-            for file_name, data in results.items():
-                all_text += f"\n\n--- {file_name} ---\n\n"
-                
-                if data['file_type'] == 'PDF':
-                    for page in data.get('pages', []):
-                        all_text += f"Page {page['page_number']}:\n"
-                        all_text += page.get('text', '') + "\n\n"
-                elif data['file_type'] == 'DOCX':
-                    for para in data.get('paragraphs', []):
-                        all_text += para + "\n\n"
-                elif data['file_type'] == 'PPTX':
-                    for slide in data.get('slides', []):
-                        all_text += f"Slide {slide['slide_number']}:\n"
-                        all_text += slide.get('text', '') + "\n\n"
-                elif data['file_type'] == 'Excel':
-                    for sheet in data.get('sheets', []):
-                        all_text += f"Sheet: {sheet['sheet_name']}\n"
-                        all_text += sheet.get('text_content', '') + "\n\n"
-            
-            st.download_button(
-                label="📄 Download All Text",
-                data=all_text,
-                file_name="extracted_text.txt",
-                mime="text/plain"
-            )
-        
-        with col3:
-            # Export all tables as Excel
-            if total_tables > 0:
-                try:
-                    # Create Excel file with multiple sheets
-                    output = BytesIO()
-                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                        sheet_count = 0
-                        
-                        for file_name, data in results.items():
-                            tables = data.get('extracted_tables', [])
-                            if tables:
-                                for i, table in enumerate(tables, 1):
-                                    cleaned_df = clean_table_data(table.get('data'))
-                                    if cleaned_df is not None and not cleaned_df.empty:
-                                        sheet_count += 1
-                                        sheet_name = f"{os.path.splitext(file_name)[0]}_T{i}"[:31]  # Excel sheet name limit
-                                        cleaned_df.to_excel(writer, sheet_name=sheet_name, index=False)
-                    
-                    if sheet_count > 0:
-                        st.download_button(
-                            label="📊 Download All Tables (Excel)",
-                            data=output.getvalue(),
-                            file_name="extracted_tables.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        )
-                    else:
-                        st.info("No valid tables to export")
-                        
-                except Exception as e:
-                    st.error(f"Error creating Excel export: {str(e)}")
-            else:
-                st.info("No tables available for export")
-        
-        # Processing insights
-        st.subheader("💡 Processing Insights")
-        
-        insights = []
-        
-        # File type insights
+        # File type distribution
         file_types = Counter(data['file_type'] for data in results.values())
-        insights.append(f"Processed {len(file_types)} different file types")
+        st.write("**File Type Distribution:**")
+        for file_type, count in file_types.items():
+            st.write(f"  - {file_type}: {count} files")
         
-        # Content insights
-        if total_words > 0:
-            avg_words_per_file = total_words / total_files
-            insights.append(f"Average words per file: {avg_words_per_file:,.0f}")
+        # Processing statistics
+        st.write("\n**Processing Statistics:**")
+        st.write(f"  - Total files processed: {total_files}")
+        st.write(f"  - Total words extracted: {total_words:,}")
+        st.write(f"  - Total characters: {total_chars:,}")
+        st.write(f"  - Total images found: {total_images}")
+        st.write(f"  - Total tables extracted: {total_tables}")
         
-        if total_images > 0:
-            insights.append(f"Found images in {sum(1 for data in results.values() if data.get('total_images', 0) > 0)} files")
+        # Font information (for PDFs)
+        all_fonts = set()
+        for data in results.values():
+            if data['file_type'] == 'PDF':
+                all_fonts.update(data.get('fonts_used', []))
         
-        if total_tables > 0:
-            insights.append(f"Extracted tables from {sum(1 for data in results.values() if data.get('extracted_tables', []))} files")
+        if all_fonts:
+            st.write(f"\n**Fonts Used:** {', '.join(sorted(all_fonts))}")
         
-        # Display insights
-        for insight in insights:
-            st.write(f"• {insight}")
-        
-        # Quality metrics
-        st.subheader("🎯 Quality Metrics")
-        
-        # Success rate
-        success_rate = 100.0  # All files in results are successful
-        st.metric("Success Rate", f"{success_rate:.1f}%")
-        
-        # Processing efficiency
-        if total_files > 0:
-            avg_size = sum(data.get('file_size_mb', 0) for data in results.values()) / total_files
-            st.metric("Average File Size", f"{avg_size:.2f} MB")
-        
-        # Table extraction quality
-        if total_tables > 0:
-            tables_with_confidence = [
-                table for data in results.values() 
-                for table in data.get('extracted_tables', []) 
-                if 'confidence' in table
-            ]
-            
-            if tables_with_confidence:
-                avg_confidence = sum(
-                    float(table['confidence']) for table in tables_with_confidence 
-                    if isinstance(table['confidence'], (int, float))
-                ) / len(tables_with_confidence)
-                st.metric("Average Table Confidence", f"{avg_confidence:.1f}%")
-
-    # Additional actions
-    st.header("🔄 Additional Actions")
+        # Success message
+        st.success("🎉 All documents processed successfully!")
+    
+    # Download section
+    st.header("⬇️ Download Results")
     
     col1, col2 = st.columns(2)
     
     with col1:
-        if st.button("🔄 Process New Files", type="secondary", use_container_width=True):
-            # Clear session state
-            st.session_state.extraction_results = None
-            st.session_state.processing_complete = False
-            st.session_state.uploaded_files = []
-            st.session_state.selected_pages = {}
-            st.rerun()
+        # JSON download
+        if st.button("📄 Download Full Results (JSON)", use_container_width=True):
+            json_data = json.dumps(results, indent=2, ensure_ascii=False, default=str)
+            st.download_button(
+                label="Download JSON",
+                data=json_data,
+                file_name=f"extraction_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                mime="application/json",
+                use_container_width=True
+            )
     
     with col2:
-        if st.button("📋 Copy Summary to Clipboard", use_container_width=True):
-            summary_text = f"""
-Document Processing Summary
-==========================
-Total Files: {total_files}
-Total Words: {total_words:,}
-Total Characters: {total_chars:,}
-Total Images: {total_images}
-Total Tables: {total_tables}
+        # CSV download for tables
+        if total_tables > 0:
+            if st.button("📊 Download All Tables (CSV)", use_container_width=True):
+                # Create ZIP file with all tables
+                zip_buffer = BytesIO()
+                with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                    
+                    table_count = 0
+                    for file_name, data in results.items():
+                        file_base = os.path.splitext(file_name)[0]
+                        
+                        for i, table in enumerate(data.get('extracted_tables', []), 1):
+                            try:
+                                if table.get('data'):
+                                    page_info = f"_page_{table.get('page', 'unknown')}" if table.get('page') else ""
+                                    csv_name = f"{file_base}_table_{i}{page_info}_{table.get('method', 'unknown')}.csv"
+                                    
+                                    if isinstance(table['data'], list) and isinstance(table['data'][0], dict):
+                                        df = pd.DataFrame(table['data'])
+                                    elif isinstance(table['data'], list):
+                                        df = pd.DataFrame(table['data'][1:], columns=table['data'][0] if table['data'] else [])
+                                    else:
+                                        continue
+                                    
+                                    csv_data = df.to_csv(index=False)
+                                    zip_file.writestr(csv_name, csv_data)
+                                    table_count += 1
+                            except Exception as e:
+                                continue
+                
+                if table_count > 0:
+                    st.download_button(
+                        label=f"Download {table_count} Tables (ZIP)",
+                        data=zip_buffer.getvalue(),
+                        file_name=f"extracted_tables_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
+                        mime="application/zip",
+                        use_container_width=True
+                    )
+                else:
+                    st.error("No tables could be exported to CSV format.")
+        else:
+            st.info("No tables available for download.")
+    
+    # Text content download
+    st.subheader("📝 Text Content Download")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("📄 Download All Text Content", use_container_width=True):
+            # Combine all text content
+            all_text = []
+            for file_name, data in results.items():
+                all_text.append(f"=== {file_name} ===\n")
+                
+                if data['file_type'] == 'PDF':
+                    for page in data.get('pages', []):
+                        all_text.append(f"\n--- Page {page['page_number']} ---\n")
+                        all_text.append(page.get('text', ''))
+                
+                elif data['file_type'] == 'DOCX':
+                    for paragraph in data.get('paragraphs', []):
+                        all_text.append(paragraph.get('text', ''))
+                
+                elif data['file_type'] == 'PPTX':
+                    for slide in data.get('slides', []):
+                        all_text.append(f"\n--- Slide {slide.get('slide_number', 'N/A')} ---\n")
+                        all_text.append(slide.get('text', ''))
+                
+                elif data['file_type'] == 'Excel':
+                    for sheet in data.get('sheets', []):
+                        all_text.append(f"\n--- Sheet: {sheet.get('name', 'N/A')} ---\n")
+                        # Add sheet data if available
+                        if sheet.get('data'):
+                            all_text.append(str(sheet['data']))
+                
+                all_text.append("\n\n")
+            
+            combined_text = '\n'.join(all_text)
+            st.download_button(
+                label="Download Combined Text",
+                data=combined_text,
+                file_name=f"extracted_text_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                mime="text/plain",
+                use_container_width=True
+            )
+    
+    with col2:
+        if st.button("📊 Download Summary Report", use_container_width=True):
+            # Create summary report
+            summary_lines = []
+            summary_lines.append("DOCUMENT EXTRACTION SUMMARY REPORT")
+            summary_lines.append("=" * 50)
+            summary_lines.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            summary_lines.append("")
+            
+            summary_lines.append("PROCESSING OVERVIEW:")
+            summary_lines.append(f"  - Files processed: {total_files}")
+            summary_lines.append(f"  - Total words: {total_words:,}")
+            summary_lines.append(f"  - Total characters: {total_chars:,}")
+            summary_lines.append(f"  - Images extracted: {total_images}")
+            summary_lines.append(f"  - Tables extracted: {total_tables}")
+            summary_lines.append("")
+            
+            summary_lines.append("FILE DETAILS:")
+            for file_name, data in results.items():
+                summary_lines.append(f"  📄 {file_name}")
+                summary_lines.append(f"    - Type: {data['file_type']}")
+                summary_lines.append(f"    - Size: {data.get('file_size_mb', 0):.2f} MB")
+                
+                if data['file_type'] == 'PDF':
+                    summary_lines.append(f"    - Pages: {data.get('page_count', 0)}")
+                    summary_lines.append(f"    - Words: {data.get('total_words', 0):,}")
+                    summary_lines.append(f"    - Images: {data.get('total_images', 0)}")
+                    summary_lines.append(f"    - Tables: {len(data.get('extracted_tables', []))}")
+                
+                elif data['file_type'] == 'DOCX':
+                    summary_lines.append(f"    - Paragraphs: {len(data.get('paragraphs', []))}")
+                    summary_lines.append(f"    - Words: {data.get('total_words', 0):,}")
+                    summary_lines.append(f"    - Tables: {len(data.get('tables', []))}")
+                
+                elif data['file_type'] == 'PPTX':
+                    summary_lines.append(f"    - Slides: {data.get('total_slides', 0)}")
+                    summary_lines.append(f"    - Words: {data.get('total_words', 0):,}")
+                
+                elif data['file_type'] == 'Excel':
+                    summary_lines.append(f"    - Sheets: {len(data.get('sheets', []))}")
+                
+                summary_lines.append("")
+            
+            # Add metadata section
+            summary_lines.append("METADATA INFORMATION:")
+            for file_name, data in results.items():
+                if data.get('metadata'):
+                    summary_lines.append(f"  📄 {file_name}:")
+                    for key, value in data['metadata'].items():
+                        if isinstance(value, str) and len(value) > 100:
+                            summary_lines.append(f"    - {key}: {value[:100]}...")
+                        else:
+                            summary_lines.append(f"    - {key}: {value}")
+                    summary_lines.append("")
+            
+            summary_report = '\n'.join(summary_lines)
+            st.download_button(
+                label="Download Summary Report",
+                data=summary_report,
+                file_name=f"summary_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                mime="text/plain",
+                use_container_width=True
+            )
 
-File Details:
-{summary_df.to_string(index=False)}
-"""
-            st.code(summary_text, language="text")
-            st.success("Summary generated! Copy the text above to your clipboard.")
-
-# Run the main application
+# Run the main function
 if __name__ == "__main__":
     main()
