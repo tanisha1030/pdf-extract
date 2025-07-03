@@ -199,7 +199,7 @@ def main():
     </div>
     """, unsafe_allow_html=True)
     
-    # Sidebar with features and settings
+    # Sidebar with features
     with st.sidebar:
         st.markdown("## 🔧 Features")
         st.markdown("""
@@ -220,24 +220,18 @@ def main():
         - **Excel** (.xlsx, .xls)
         """)
         
-        st.markdown("## ⚙️ Settings")
-        show_detailed_logs = st.checkbox("Show detailed processing logs", value=False)
-        auto_download = st.checkbox("Auto-download results", value=True)
-        show_images = st.checkbox("Display extracted images", value=True)
-        show_tables = st.checkbox("Display extracted tables", value=True)
-        
         # Add reset button
         add_reset_button()
     
     # Check if we have results to display
     if st.session_state.processing_complete and st.session_state.results:
         # Show content viewer
-        show_content_viewer(st.session_state.results, show_images, show_tables)
+        show_content_viewer(st.session_state.results)
     else:
         # Show upload interface
-        show_upload_interface(show_detailed_logs, auto_download)
+        show_upload_interface()
 
-def show_upload_interface(show_detailed_logs, auto_download):
+def show_upload_interface():
     """Show the file upload interface"""
     col1, col2 = st.columns([2, 1])
     
@@ -275,7 +269,7 @@ def show_upload_interface(show_detailed_logs, auto_download):
             
             # Process button
             if st.button("🚀 Process Documents", type="primary", use_container_width=True):
-                process_documents(uploaded_files, show_detailed_logs, auto_download)
+                process_documents(uploaded_files)
     
     with col2:
         st.markdown("## 📈 Quick Stats")
@@ -292,7 +286,7 @@ def show_upload_interface(show_detailed_logs, auto_download):
         </div>
         """, unsafe_allow_html=True)
 
-def show_content_viewer(results, show_images, show_tables):
+def show_content_viewer(results):
     """Show the content viewer with page navigation"""
     st.markdown("## 📖 Document Content Viewer")
     
@@ -329,13 +323,13 @@ def show_content_viewer(results, show_images, show_tables):
         if file_data:
             # Show content based on file type
             if file_data['file_type'] == 'PDF':
-                show_pdf_content(file_data, show_images, show_tables)
+                show_pdf_content(file_data)
             elif file_data['file_type'] == 'DOCX':
-                show_docx_content(file_data, show_images, show_tables)
+                show_docx_content(file_data)
             elif file_data['file_type'] == 'PPTX':
-                show_pptx_content(file_data, show_images, show_tables)
+                show_pptx_content(file_data)
             elif file_data['file_type'] == 'Excel':
-                show_excel_content(file_data, show_tables)
+                show_excel_content(file_data)
     
     # Add download section
     st.markdown("---")
@@ -348,7 +342,7 @@ def get_file_data(results, filename):
             return data
     return None
 
-def show_pdf_content(file_data, show_images, show_tables):
+def show_pdf_content(file_data):
     """Show PDF content with enhanced page navigation"""
     st.markdown("### 📄 PDF Content")
     
@@ -422,34 +416,8 @@ def show_pdf_content(file_data, show_images, show_tables):
     else:
         st.info("No text content found on this page.")
     
-    # Show images if enabled
-    if show_images and current_page.get('images'):
-        st.markdown("#### 🖼️ Images")
-        images = current_page['images']
-        
-        # Display images in a grid
-        cols = st.columns(min(3, len(images)))
-        for i, image in enumerate(images):
-            with cols[i % len(cols)]:
-                st.markdown(f"""
-                <div class="image-item">
-                    <strong>Image {i+1}</strong><br>
-                    Size: {image.get('width', 0)} x {image.get('height', 0)}<br>
-                    File: {image.get('size_bytes', 0)} bytes
-                </div>
-                """, unsafe_allow_html=True)
-                
-                # Try to display image if file exists - FIXED: use_container_width instead of use_column_width
-                if image.get('filename') and os.path.exists(image['filename']):
-                    try:
-                        st.image(image['filename'], use_container_width=True)
-                    except Exception as e:
-                        st.error(f"Error displaying image: {str(e)}")
-                else:
-                    st.warning("Image file not found")
-    
-    # Show tables if enabled
-    if show_tables and current_page.get('tables'):
+    # Show tables
+    if current_page.get('tables'):
         st.markdown("#### 📊 Tables")
         for i, table in enumerate(current_page['tables']):
             st.markdown(f"**Table {i+1}**")
@@ -468,14 +436,13 @@ def show_pdf_content(file_data, show_images, show_tables):
             'Page Number': current_page.get('page_number', st.session_state.selected_page),
             'Word Count': len(page_text.split()) if page_text else 0,
             'Character Count': len(page_text) if page_text else 0,
-            'Images': len(current_page.get('images', [])),
             'Tables': len(current_page.get('tables', []))
         }
         
         for key, value in metadata.items():
             st.write(f"**{key}:** {value}")
 
-def show_docx_content(file_data, show_images, show_tables):
+def show_docx_content(file_data):
     """Show DOCX content with enhanced paragraph navigation"""
     st.markdown("### 📄 Word Document Content")
     
@@ -549,8 +516,8 @@ def show_docx_content(file_data, show_images, show_tables):
             </div>
             """, unsafe_allow_html=True)
     
-    # Show tables if enabled
-    if show_tables and file_data.get('tables'):
+    # Show tables
+    if file_data.get('tables'):
         st.markdown("#### 📊 Document Tables")
         for i, table in enumerate(file_data['tables']):
             st.markdown(f"**Table {i+1}**")
@@ -561,7 +528,7 @@ def show_docx_content(file_data, show_images, show_tables):
             except Exception as e:
                 st.error(f"Error displaying table: {str(e)}")
 
-def show_pptx_content(file_data, show_images, show_tables):
+def show_pptx_content(file_data):
     """Show PowerPoint content with enhanced slide navigation"""
     st.markdown("### 🎞️ PowerPoint Content")
     
@@ -644,8 +611,8 @@ def show_pptx_content(file_data, show_images, show_tables):
         </div>
         """, unsafe_allow_html=True)
     
-    # Show tables if enabled
-    if show_tables and current_slide.get('tables'):
+    # Show tables
+    if current_slide.get('tables'):
         st.markdown("#### 📊 Tables")
         for i, table in enumerate(current_slide['tables']):
             st.markdown(f"**Table {i+1}**")
@@ -656,7 +623,7 @@ def show_pptx_content(file_data, show_images, show_tables):
             except Exception as e:
                 st.error(f"Error displaying table: {str(e)}")
 
-def show_excel_content(file_data, show_tables):
+def show_excel_content(file_data):
     """Show Excel content with enhanced sheet navigation"""
     st.markdown("### 📊 Excel Content")
     
@@ -710,7 +677,7 @@ def show_excel_content(file_data, show_tables):
             st.metric("Data Points", selected_sheet.get('rows', 0) * selected_sheet.get('columns', 0))
         
         # Show sheet data
-        if show_tables and selected_sheet.get('data'):
+        if selected_sheet.get('data'):
             st.markdown("#### 📈 Data")
             try:
                 df = pd.DataFrame(selected_sheet['data'])
@@ -741,7 +708,7 @@ def show_excel_content(file_data, show_tables):
         else:
             st.info("No data available for this sheet.")
 
-def process_documents(uploaded_files, show_detailed_logs, auto_download):
+def process_documents(uploaded_files):
     """Process uploaded documents"""
     # Create a temporary directory to store uploaded files
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -752,7 +719,6 @@ def process_documents(uploaded_files, show_detailed_logs, auto_download):
             'total_pages': 0,
             'total_words': 0,
             'total_tables': 0,
-            'total_images': 0,
             'start_time': datetime.now(),
             'file_types': {}
         }
@@ -774,15 +740,14 @@ def process_documents(uploaded_files, show_detailed_logs, auto_download):
                 status_text.text(f"Processing {i+1}/{len(uploaded_files)}: {uploaded_file.name}")
                 
                 # Process the file
-                extractor = ComprehensiveDocumentExtractor(file_path)
-                file_data = extractor.extract_all()
+                extractor = ComprehensiveDocumentExtractor()
+                file_data = extractor.extract_all(file_path)
                 
                 # Update statistics
                 stats['processed_files'] += 1
                 stats['total_pages'] += file_data.get('page_count', 1)
                 stats['total_words'] += file_data.get('word_count', 0)
                 stats['total_tables'] += len(file_data.get('tables', []))
-                stats['total_images'] += len(file_data.get('images', []))
                 
                 # Track file types
                 file_type = file_data.get('file_type', 'Unknown')
@@ -793,9 +758,6 @@ def process_documents(uploaded_files, show_detailed_logs, auto_download):
                 # Store results
                 results[uploaded_file.name] = file_data
                 
-                if show_detailed_logs:
-                    st.success(f"Processed: {uploaded_file.name}")
-            
             except Exception as e:
                 st.error(f"Error processing {uploaded_file.name}: {str(e)}")
                 continue
@@ -817,16 +779,12 @@ def process_documents(uploaded_files, show_detailed_logs, auto_download):
         
         # Show summary stats
         show_processing_stats(stats)
-        
-        # Auto-download if enabled
-        if auto_download and results:
-            create_download_section(results, stats)
 
 def show_processing_stats(stats):
     """Show processing statistics"""
     st.markdown("## 📊 Processing Statistics")
     
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3 = st.columns(3)
     
     with col1:
         st.metric("Total Files", stats['total_files'])
@@ -838,9 +796,6 @@ def show_processing_stats(stats):
     
     with col3:
         st.metric("Total Tables", stats['total_tables'])
-        st.metric("Total Images", stats['total_images'])
-    
-    with col4:
         st.metric("Processing Time", f"{stats['processing_time']:.2f} seconds")
     
     # File type distribution
