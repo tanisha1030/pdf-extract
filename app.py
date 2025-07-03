@@ -10,211 +10,9 @@ from datetime import datetime
 from pathlib import Path
 import io
 import base64
-from typing import Dict, List, Optional, Union
-import pdfplumber
-from docx import Document
-from pptx import Presentation
-import openpyxl
 
-class ComprehensiveDocumentExtractor:
-    """A class to extract content from various document formats."""
-    
-    def extract_all(self, file_path: str) -> Dict:
-        """Extract all content from a document based on its file type."""
-        file_ext = os.path.splitext(file_path)[1].lower()
-        
-        if file_ext == '.pdf':
-            return self._extract_pdf(file_path)
-        elif file_ext == '.docx':
-            return self._extract_docx(file_path)
-        elif file_ext == '.pptx':
-            return self._extract_pptx(file_path)
-        elif file_ext in ('.xlsx', '.xls'):
-            return self._extract_excel(file_path)
-        else:
-            raise ValueError(f"Unsupported file type: {file_ext}")
-    
-    def _extract_pdf(self, file_path: str) -> Dict:
-        """Extract content from a PDF file."""
-        result = {
-            'filename': os.path.basename(file_path),
-            'file_type': 'PDF',
-            'file_size_mb': os.path.getsize(file_path) / (1024 * 1024),
-            'pages': [],
-            'tables': [],
-            'metadata': {},
-            'page_count': 0,
-            'word_count': 0
-        }
-        
-        try:
-            with pdfplumber.open(file_path) as pdf:
-                result['page_count'] = len(pdf.pages)
-                
-                for i, page in enumerate(pdf.pages):
-                    page_data = {
-                        'page_number': i + 1,
-                        'text': page.extract_text() or '',
-                        'tables': []
-                    }
-                    
-                    # Extract tables
-                    tables = page.extract_tables()
-                    for table in tables:
-                        page_data['tables'].append({'data': table})
-                        result['tables'].append({'data': table})
-                    
-                    # Count words
-                    word_count = len(page_data['text'].split())
-                    result['word_count'] += word_count
-                    
-                    result['pages'].append(page_data)
-                
-                # Extract metadata
-                if hasattr(pdf, 'metadata'):
-                    result['metadata'] = dict(pdf.metadata)
-                
-            return result
-        except Exception as e:
-            raise Exception(f"Error processing PDF: {str(e)}")
-    
-    def _extract_docx(self, file_path: str) -> Dict:
-        """Extract content from a DOCX file."""
-        result = {
-            'filename': os.path.basename(file_path),
-            'file_type': 'DOCX',
-            'file_size_mb': os.path.getsize(file_path) / (1024 * 1024),
-            'paragraphs': [],
-            'tables': [],
-            'page_count': 1,  # DOCX doesn't have pages in the same way as PDF
-            'word_count': 0
-        }
-        
-        try:
-            doc = Document(file_path)
-            
-            # Extract paragraphs
-            for para in doc.paragraphs:
-                text = para.text.strip()
-                if text:
-                    result['paragraphs'].append({
-                        'text': text,
-                        'style': para.style.name
-                    })
-                    result['word_count'] += len(text.split())
-            
-            # Extract tables
-            for table in doc.tables:
-                table_data = []
-                for row in table.rows:
-                    row_data = []
-                    for cell in row.cells:
-                        row_data.append(cell.text.strip())
-                    table_data.append(row_data)
-                
-                result['tables'].append({'data': table_data})
-            
-            return result
-        except Exception as e:
-            raise Exception(f"Error processing DOCX: {str(e)}")
-    
-    def _extract_pptx(self, file_path: str) -> Dict:
-        """Extract content from a PPTX file."""
-        result = {
-            'filename': os.path.basename(file_path),
-            'file_type': 'PPTX',
-            'file_size_mb': os.path.getsize(file_path) / (1024 * 1024),
-            'slides': [],
-            'tables': [],
-            'slide_count': 0,
-            'word_count': 0
-        }
-        
-        try:
-            prs = Presentation(file_path)
-            result['slide_count'] = len(prs.slides)
-            
-            for i, slide in enumerate(prs.slides):
-                slide_data = {
-                    'slide_number': i + 1,
-                    'title': '',
-                    'content': '',
-                    'notes': '',
-                    'tables': []
-                }
-                
-                # Extract title and content
-                for shape in slide.shapes:
-                    if hasattr(shape, 'text'):
-                        text = shape.text.strip()
-                        if not text:
-                            continue
-                        
-                        if shape == slide.shapes.title:
-                            slide_data['title'] = text
-                        else:
-                            slide_data['content'] += text + '\n'
-                
-                # Extract notes
-                notes_slide = slide.notes_slide
-                if notes_slide and notes_slide.notes_text_frame:
-                    slide_data['notes'] = notes_slide.notes_text_frame.text.strip()
-                
-                # Extract tables (simplified)
-                for shape in slide.shapes:
-                    if shape.has_table:
-                        table_data = []
-                        for row in shape.table.rows:
-                            row_data = []
-                            for cell in row.cells:
-                                row_data.append(cell.text_frame.text.strip())
-                            table_data.append(row_data)
-                        
-                        slide_data['tables'].append({'data': table_data})
-                        result['tables'].append({'data': table_data})
-                
-                # Count words
-                word_count = len(slide_data['content'].split()) + len(slide_data['notes'].split())
-                result['word_count'] += word_count
-                
-                result['slides'].append(slide_data)
-            
-            return result
-        except Exception as e:
-            raise Exception(f"Error processing PPTX: {str(e)}")
-    
-    def _extract_excel(self, file_path: str) -> Dict:
-        """Extract content from an Excel file."""
-        result = {
-            'filename': os.path.basename(file_path),
-            'file_type': 'Excel',
-            'file_size_mb': os.path.getsize(file_path) / (1024 * 1024),
-            'sheets': [],
-            'sheet_count': 0
-        }
-        
-        try:
-            wb = openpyxl.load_workbook(file_path, data_only=True)
-            result['sheet_count'] = len(wb.sheetnames)
-            
-            for sheet_name in wb.sheetnames:
-                sheet = wb[sheet_name]
-                sheet_data = {
-                    'name': sheet_name,
-                    'rows': sheet.max_row,
-                    'columns': sheet.max_column,
-                    'data': []
-                }
-                
-                # Extract data (limited to first 100 rows for performance)
-                for row in sheet.iter_rows(values_only=True):
-                    sheet_data['data'].append(list(row))
-                
-                result['sheets'].append(sheet_data)
-            
-            return result
-        except Exception as e:
-            raise Exception(f"Error processing Excel: {str(e)}")
+# Import your existing extractor class
+from pdfextract import ComprehensiveDocumentExtractor
 
 # Page configuration
 st.set_page_config(
@@ -401,7 +199,7 @@ def main():
     </div>
     """, unsafe_allow_html=True)
     
-    # Sidebar with features
+    # Sidebar with features and settings
     with st.sidebar:
         st.markdown("## 🔧 Features")
         st.markdown("""
@@ -422,18 +220,24 @@ def main():
         - **Excel** (.xlsx, .xls)
         """)
         
+        st.markdown("## ⚙️ Settings")
+        show_detailed_logs = st.checkbox("Show detailed processing logs", value=False)
+        auto_download = st.checkbox("Auto-download results", value=True)
+        show_images = st.checkbox("Display extracted images", value=True)
+        show_tables = st.checkbox("Display extracted tables", value=True)
+        
         # Add reset button
         add_reset_button()
     
     # Check if we have results to display
     if st.session_state.processing_complete and st.session_state.results:
         # Show content viewer
-        show_content_viewer(st.session_state.results)
+        show_content_viewer(st.session_state.results, show_images, show_tables)
     else:
         # Show upload interface
-        show_upload_interface()
+        show_upload_interface(show_detailed_logs, auto_download)
 
-def show_upload_interface():
+def show_upload_interface(show_detailed_logs, auto_download):
     """Show the file upload interface"""
     col1, col2 = st.columns([2, 1])
     
@@ -471,7 +275,7 @@ def show_upload_interface():
             
             # Process button
             if st.button("🚀 Process Documents", type="primary", use_container_width=True):
-                process_documents(uploaded_files)
+                process_documents(uploaded_files, show_detailed_logs, auto_download)
     
     with col2:
         st.markdown("## 📈 Quick Stats")
@@ -488,7 +292,7 @@ def show_upload_interface():
         </div>
         """, unsafe_allow_html=True)
 
-def show_content_viewer(results):
+def show_content_viewer(results, show_images, show_tables):
     """Show the content viewer with page navigation"""
     st.markdown("## 📖 Document Content Viewer")
     
@@ -517,7 +321,7 @@ def show_content_viewer(results):
             if file_data:
                 st.markdown("### 📊 File Stats")
                 st.metric("Type", file_data['file_type'])
-                st.metric("Words", f"{file_data.get('word_count', 0):,}")
+                st.metric("Words", f"{file_data.get('total_words', 0):,}")
                 st.metric("Size", f"{file_data.get('file_size_mb', 0):.2f} MB")
     
     if selected_file:
@@ -525,13 +329,13 @@ def show_content_viewer(results):
         if file_data:
             # Show content based on file type
             if file_data['file_type'] == 'PDF':
-                show_pdf_content(file_data)
+                show_pdf_content(file_data, show_images, show_tables)
             elif file_data['file_type'] == 'DOCX':
-                show_docx_content(file_data)
+                show_docx_content(file_data, show_images, show_tables)
             elif file_data['file_type'] == 'PPTX':
-                show_pptx_content(file_data)
+                show_pptx_content(file_data, show_images, show_tables)
             elif file_data['file_type'] == 'Excel':
-                show_excel_content(file_data)
+                show_excel_content(file_data, show_tables)
     
     # Add download section
     st.markdown("---")
@@ -544,7 +348,7 @@ def get_file_data(results, filename):
             return data
     return None
 
-def show_pdf_content(file_data):
+def show_pdf_content(file_data, show_images, show_tables):
     """Show PDF content with enhanced page navigation"""
     st.markdown("### 📄 PDF Content")
     
@@ -618,8 +422,34 @@ def show_pdf_content(file_data):
     else:
         st.info("No text content found on this page.")
     
-    # Show tables
-    if current_page.get('tables'):
+    # Show images if enabled
+    if show_images and current_page.get('images'):
+        st.markdown("#### 🖼️ Images")
+        images = current_page['images']
+        
+        # Display images in a grid
+        cols = st.columns(min(3, len(images)))
+        for i, image in enumerate(images):
+            with cols[i % len(cols)]:
+                st.markdown(f"""
+                <div class="image-item">
+                    <strong>Image {i+1}</strong><br>
+                    Size: {image.get('width', 0)} x {image.get('height', 0)}<br>
+                    File: {image.get('size_bytes', 0)} bytes
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Try to display image if file exists - FIXED: use_container_width instead of use_column_width
+                if image.get('filename') and os.path.exists(image['filename']):
+                    try:
+                        st.image(image['filename'], use_container_width=True)
+                    except Exception as e:
+                        st.error(f"Error displaying image: {str(e)}")
+                else:
+                    st.warning("Image file not found")
+    
+    # Show tables if enabled
+    if show_tables and current_page.get('tables'):
         st.markdown("#### 📊 Tables")
         for i, table in enumerate(current_page['tables']):
             st.markdown(f"**Table {i+1}**")
@@ -638,13 +468,14 @@ def show_pdf_content(file_data):
             'Page Number': current_page.get('page_number', st.session_state.selected_page),
             'Word Count': len(page_text.split()) if page_text else 0,
             'Character Count': len(page_text) if page_text else 0,
+            'Images': len(current_page.get('images', [])),
             'Tables': len(current_page.get('tables', []))
         }
         
         for key, value in metadata.items():
             st.write(f"**{key}:** {value}")
 
-def show_docx_content(file_data):
+def show_docx_content(file_data, show_images, show_tables):
     """Show DOCX content with enhanced paragraph navigation"""
     st.markdown("### 📄 Word Document Content")
     
@@ -718,8 +549,8 @@ def show_docx_content(file_data):
             </div>
             """, unsafe_allow_html=True)
     
-    # Show tables
-    if file_data.get('tables'):
+    # Show tables if enabled
+    if show_tables and file_data.get('tables'):
         st.markdown("#### 📊 Document Tables")
         for i, table in enumerate(file_data['tables']):
             st.markdown(f"**Table {i+1}**")
@@ -730,7 +561,7 @@ def show_docx_content(file_data):
             except Exception as e:
                 st.error(f"Error displaying table: {str(e)}")
 
-def show_pptx_content(file_data):
+def show_pptx_content(file_data, show_images, show_tables):
     """Show PowerPoint content with enhanced slide navigation"""
     st.markdown("### 🎞️ PowerPoint Content")
     
@@ -813,8 +644,8 @@ def show_pptx_content(file_data):
         </div>
         """, unsafe_allow_html=True)
     
-    # Show tables
-    if current_slide.get('tables'):
+    # Show tables if enabled
+    if show_tables and current_slide.get('tables'):
         st.markdown("#### 📊 Tables")
         for i, table in enumerate(current_slide['tables']):
             st.markdown(f"**Table {i+1}**")
@@ -825,7 +656,7 @@ def show_pptx_content(file_data):
             except Exception as e:
                 st.error(f"Error displaying table: {str(e)}")
 
-def show_excel_content(file_data):
+def show_excel_content(file_data, show_tables):
     """Show Excel content with enhanced sheet navigation"""
     st.markdown("### 📊 Excel Content")
     
@@ -879,7 +710,7 @@ def show_excel_content(file_data):
             st.metric("Data Points", selected_sheet.get('rows', 0) * selected_sheet.get('columns', 0))
         
         # Show sheet data
-        if selected_sheet.get('data'):
+        if show_tables and selected_sheet.get('data'):
             st.markdown("#### 📈 Data")
             try:
                 df = pd.DataFrame(selected_sheet['data'])
@@ -910,7 +741,7 @@ def show_excel_content(file_data):
         else:
             st.info("No data available for this sheet.")
 
-def process_documents(uploaded_files):
+def process_documents(uploaded_files, show_detailed_logs, auto_download):
     """Process uploaded documents"""
     # Create a temporary directory to store uploaded files
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -921,6 +752,7 @@ def process_documents(uploaded_files):
             'total_pages': 0,
             'total_words': 0,
             'total_tables': 0,
+            'total_images': 0,
             'start_time': datetime.now(),
             'file_types': {}
         }
@@ -942,14 +774,15 @@ def process_documents(uploaded_files):
                 status_text.text(f"Processing {i+1}/{len(uploaded_files)}: {uploaded_file.name}")
                 
                 # Process the file
-                extractor = ComprehensiveDocumentExtractor()
-                file_data = extractor.extract_all(file_path)
+                extractor = ComprehensiveDocumentExtractor(file_path)
+                file_data = extractor.extract_all()
                 
                 # Update statistics
                 stats['processed_files'] += 1
                 stats['total_pages'] += file_data.get('page_count', 1)
                 stats['total_words'] += file_data.get('word_count', 0)
                 stats['total_tables'] += len(file_data.get('tables', []))
+                stats['total_images'] += len(file_data.get('images', []))
                 
                 # Track file types
                 file_type = file_data.get('file_type', 'Unknown')
@@ -960,6 +793,9 @@ def process_documents(uploaded_files):
                 # Store results
                 results[uploaded_file.name] = file_data
                 
+                if show_detailed_logs:
+                    st.success(f"Processed: {uploaded_file.name}")
+            
             except Exception as e:
                 st.error(f"Error processing {uploaded_file.name}: {str(e)}")
                 continue
@@ -981,12 +817,16 @@ def process_documents(uploaded_files):
         
         # Show summary stats
         show_processing_stats(stats)
+        
+        # Auto-download if enabled
+        if auto_download and results:
+            create_download_section(results, stats)
 
 def show_processing_stats(stats):
     """Show processing statistics"""
     st.markdown("## 📊 Processing Statistics")
     
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     
     with col1:
         st.metric("Total Files", stats['total_files'])
@@ -998,6 +838,9 @@ def show_processing_stats(stats):
     
     with col3:
         st.metric("Total Tables", stats['total_tables'])
+        st.metric("Total Images", stats['total_images'])
+    
+    with col4:
         st.metric("Processing Time", f"{stats['processing_time']:.2f} seconds")
     
     # File type distribution
@@ -1037,101 +880,41 @@ def create_download_section(results, stats):
             
             zipf.write(stats_path, stats_filename)
         
-        # Create download buttons
-        col1, col2 = st.columns(2)
+        # Create download button
+        with open(zip_path, 'rb') as f:
+            zip_data = f.read()
+        
+        st.download_button(
+            label="📥 Download All Results (ZIP)",
+            data=zip_data,
+            file_name="extraction_results.zip",
+            mime="application/zip",
+            use_container_width=True
+        )
+    
+    # Individual file download options
+    st.markdown("### 📤 Download Individual Files")
+    
+    for filename, data in results.items():
+        col1, col2 = st.columns([3, 1])
         
         with col1:
-            # Download all results as ZIP
-            with open(zip_path, 'rb') as f:
-                zip_data = f.read()
-            
-            st.download_button(
-                label="📦 Download All Results (ZIP)",
-                data=zip_data,
-                file_name="document_extraction_results.zip",
-                mime="application/zip",
-                help="Download all extracted content as a ZIP file containing JSON files"
-            )
+            st.markdown(f"**{filename}**")
+            st.caption(f"Type: {data.get('file_type', 'Unknown')} | Pages: {data.get('page_count', 1)}")
         
         with col2:
-            # Download summary report
-            summary_report = generate_summary_report(results, stats)
-            
+            json_str = json.dumps(data, indent=2)
             st.download_button(
-                label="📄 Download Summary Report (TXT)",
-                data=summary_report,
-                file_name="extraction_summary.txt",
-                mime="text/plain",
-                help="Download a text summary of the extraction results"
-            )
-        
-        # Individual file downloads
-        st.markdown("### 📂 Download Individual Files")
-        selected_file = st.selectbox(
-            "Select a file to download:",
-            list(results.keys()),
-            key="download_file_selector"
-        )
-        
-        if selected_file:
-            file_data = results[selected_file]
-            json_data = json.dumps(file_data, indent=2).encode('utf-8')
-            
-            st.download_button(
-                label=f"⬇️ Download {selected_file} Results (JSON)",
-                data=json_data,
-                file_name=f"{Path(selected_file).stem}_results.json",
+                label="⬇️ JSON",
+                data=json_str,
+                file_name=f"{Path(filename).stem}_results.json",
                 mime="application/json",
-                key=f"download_{selected_file}"
+                key=f"json_{filename}"
             )
-
-def generate_summary_report(results, stats):
-    """Generate a text summary report of the extraction"""
-    report = io.StringIO()
-    
-    report.write("=== DOCUMENT EXTRACTION SUMMARY REPORT ===\n\n")
-    report.write(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-    report.write(f"Total processing time: {stats.get('processing_time', 0):.2f} seconds\n")
-    report.write(f"Files processed: {stats.get('processed_files', 0)}/{stats.get('total_files', 0)}\n\n")
-    
-    # File type breakdown
-    report.write("=== FILE TYPE BREAKDOWN ===\n")
-    for file_type, count in stats.get('file_types', {}).items():
-        report.write(f"{file_type}: {count} files\n")
-    
-    # Overall statistics
-    report.write("\n=== OVERALL STATISTICS ===\n")
-    report.write(f"Total pages extracted: {stats.get('total_pages', 0)}\n")
-    report.write(f"Total words extracted: {stats.get('total_words', 0)}\n")
-    report.write(f"Total tables extracted: {stats.get('total_tables', 0)}\n\n")
-    
-    # Per-file details
-    report.write("=== FILE DETAILS ===\n")
-    for filename, data in results.items():
-        report.write(f"\nFile: {filename}\n")
-        report.write(f"Type: {data.get('file_type', 'Unknown')}\n")
-        report.write(f"Size: {data.get('file_size_mb', 0):.2f} MB\n")
-        
-        if data['file_type'] == 'PDF':
-            report.write(f"Pages: {data.get('page_count', 0)}\n")
-            report.write(f"Words: {data.get('word_count', 0)}\n")
-            report.write(f"Tables: {len(data.get('tables', []))}\n")
-        elif data['file_type'] == 'DOCX':
-            report.write(f"Paragraphs: {len(data.get('paragraphs', []))}\n")
-            report.write(f"Words: {data.get('word_count', 0)}\n")
-            report.write(f"Tables: {len(data.get('tables', []))}\n")
-        elif data['file_type'] == 'PPTX':
-            report.write(f"Slides: {data.get('slide_count', 0)}\n")
-            report.write(f"Words: {data.get('word_count', 0)}\n")
-            report.write(f"Tables: {len(data.get('tables', []))}\n")
-        elif data['file_type'] == 'Excel':
-            report.write(f"Sheets: {data.get('sheet_count', 0)}\n")
-    
-    return report.getvalue()
 
 def add_reset_button():
     """Add a reset button to clear session state"""
-    if st.sidebar.button("🔄 Reset Application", help="Clear all processed data and start fresh"):
+    if st.button("🔄 Reset Application", use_container_width=True):
         st.session_state.processing_complete = False
         st.session_state.results = None
         st.session_state.stats = None
