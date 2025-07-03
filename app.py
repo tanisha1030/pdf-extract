@@ -221,6 +221,7 @@ def main():
         """)
         
         st.markdown("## ⚙️ Settings")
+        max_file_size = st.slider("Max file size (MB)", 1, 100, 50)
         show_detailed_logs = st.checkbox("Show detailed processing logs", value=False)
         auto_download = st.checkbox("Auto-download results", value=True)
         show_images = st.checkbox("Display extracted images", value=True)
@@ -235,9 +236,9 @@ def main():
         show_content_viewer(st.session_state.results, show_images, show_tables)
     else:
         # Show upload interface
-        show_upload_interface(show_detailed_logs, auto_download)
+        show_upload_interface(max_file_size, show_detailed_logs, auto_download)
 
-def show_upload_interface(show_detailed_logs, auto_download):
+def show_upload_interface(max_file_size, show_detailed_logs, auto_download):
     """Show the file upload interface"""
     col1, col2 = st.columns([2, 1])
     
@@ -272,6 +273,11 @@ def show_upload_interface(show_detailed_logs, auto_download):
             
             # Show total size
             st.info(f"Total size: {total_size:.2f} MB")
+            
+            # Check file size limits
+            if total_size > max_file_size:
+                st.error(f"⚠️ Total file size ({total_size:.2f} MB) exceeds limit ({max_file_size} MB)")
+                return
             
             # Process button
             if st.button("🚀 Process Documents", type="primary", use_container_width=True):
@@ -367,7 +373,7 @@ def show_pdf_content(file_data, show_images, show_tables):
     """, unsafe_allow_html=True)
     
     # Main navigation controls
-    nav_col1, nav_col2, nav_col3 = st.columns([1, 2, 1])
+    nav_col1, nav_col2, nav_col3, nav_col4 = st.columns([1, 2, 2, 1])
     
     with nav_col1:
         if st.button("⬅️ Previous", disabled=st.session_state.selected_page <= 1, use_container_width=True):
@@ -389,6 +395,20 @@ def show_pdf_content(file_data, show_images, show_tables):
             st.rerun()
     
     with nav_col3:
+        # Page input field for quick navigation
+        page_input = st.number_input(
+            "🔢 Jump to page:",
+            min_value=1,
+            max_value=total_pages,
+            value=st.session_state.selected_page,
+            key="pdf_page_input"
+        )
+        
+        if page_input != st.session_state.selected_page:
+            st.session_state.selected_page = int(page_input)
+            st.rerun()
+    
+    with nav_col4:
         if st.button("Next ➡️", disabled=st.session_state.selected_page >= total_pages, use_container_width=True):
             st.session_state.selected_page += 1
             st.rerun()
@@ -495,7 +515,7 @@ def show_docx_content(file_data, show_images, show_tables):
     </div>
     """, unsafe_allow_html=True)
     
-    nav_col1, nav_col2, nav_col3 = st.columns([1, 2, 1])
+    nav_col1, nav_col2, nav_col3, nav_col4 = st.columns([1, 2, 2, 1])
     
     with nav_col1:
         if st.button("⬅️ Previous", disabled=st.session_state.selected_page <= 1, use_container_width=True):
@@ -516,6 +536,19 @@ def show_docx_content(file_data, show_images, show_tables):
             st.rerun()
     
     with nav_col3:
+        section_input = st.number_input(
+            "🔢 Jump to section:",
+            min_value=1,
+            max_value=total_sections,
+            value=st.session_state.selected_page,
+            key="docx_section_input"
+        )
+        
+        if section_input != st.session_state.selected_page:
+            st.session_state.selected_page = int(section_input)
+            st.rerun()
+    
+    with nav_col4:
         if st.button("Next ➡️", disabled=st.session_state.selected_page >= total_sections, use_container_width=True):
             st.session_state.selected_page += 1
             st.rerun()
@@ -579,7 +612,7 @@ def show_pptx_content(file_data, show_images, show_tables):
     </div>
     """, unsafe_allow_html=True)
     
-    nav_col1, nav_col2, nav_col3 = st.columns([1, 2, 1])
+    nav_col1, nav_col2, nav_col3, nav_col4 = st.columns([1, 2, 2, 1])
     
     with nav_col1:
         if st.button("⬅️ Previous", disabled=st.session_state.selected_page <= 1, use_container_width=True):
@@ -600,6 +633,19 @@ def show_pptx_content(file_data, show_images, show_tables):
             st.rerun()
     
     with nav_col3:
+        slide_input = st.number_input(
+            "🔢 Jump to slide:",
+            min_value=1,
+            max_value=total_slides,
+            value=st.session_state.selected_page,
+            key="pptx_slide_input"
+        )
+        
+        if slide_input != st.session_state.selected_page:
+            st.session_state.selected_page = int(slide_input)
+            st.rerun()
+    
+    with nav_col4:
         if st.button("Next ➡️", disabled=st.session_state.selected_page >= total_slides, use_container_width=True):
             st.session_state.selected_page += 1
             st.rerun()
@@ -923,4 +969,4 @@ def add_reset_button():
         st.rerun()
 
 if __name__ == "__main__":
-    main()
+    main()                 
