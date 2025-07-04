@@ -165,31 +165,31 @@ DEFAULT_OPTIONS = {
     'max_workers': 4
 }
 
-def debug_table_structure_streamlit(results):
-    """Debug function that shows output in Streamlit"""
-    st.write("### 🔍 TABLE STRUCTURE DEBUG")
+def debug_table_structure(results):
+    """Debug function to see exactly what's in your data"""
+    print("\n=== DETAILED TABLE STRUCTURE DEBUG ===")
     
     for file_name, data in results.items():
-        st.write(f"**📄 FILE: {file_name}**")
-        st.write(f"Top-level keys: {list(data.keys())}")
+        print(f"\n📄 FILE: {file_name}")
+        print(f"Top-level keys: {list(data.keys())}")
         
         # Check every key that might contain tables
         for key in data.keys():
             if 'table' in key.lower():
                 value = data[key]
-                st.write(f"  🔍 **{key}**: {type(value)}")
+                print(f"  🔍 {key}: {type(value)}")
                 if isinstance(value, list):
-                    st.write(f"    - List length: {len(value)}")
+                    print(f"    - List length: {len(value)}")
                     if len(value) > 0:
-                        st.write(f"    - First item type: {type(value[0])}")
+                        print(f"    - First item type: {type(value[0])}")
                         if isinstance(value[0], dict):
-                            st.write(f"    - First item keys: {list(value[0].keys())}")
+                            print(f"    - First item keys: {list(value[0].keys())}")
                 elif isinstance(value, dict):
-                    st.write(f"    - Dict keys: {list(value.keys())}")
+                    print(f"    - Dict keys: {list(value.keys())}")
         
         # Check pages structure
         if 'pages' in data and data['pages']:
-            st.write(f"  📑 **Pages**: {len(data['pages'])} pages")
+            print(f"  📑 Pages: {len(data['pages'])} pages")
             
             page_table_counts = []
             for i, page in enumerate(data['pages']):
@@ -205,94 +205,73 @@ def debug_table_structure_streamlit(results):
                     page_table_counts.append(f"Page {i+1}: {page_tables}")
             
             if page_table_counts:
-                st.write(f"    - Tables per page: {', '.join(page_table_counts)}")
-        
-        st.write("---")
+                print(f"    - Tables per page: {', '.join(page_table_counts)}")
+    
+    print("=== END DEBUG ===\n")
 
-def get_tables_from_data_fixed(data):
-    """Fixed table extraction - addresses the actual issue"""
+def get_tables_from_data_simple(data):
+    """Simplified table extraction - only count unique tables once"""
     
-    # The issue is likely that tables are stored in pages, and we're getting 
-    # multiple extraction methods per table, causing overcounting
+    # First, try to find tables at root level
+    root_tables = []
     
-    # Strategy: Get unique tables by deduplicating based on page + position
+    # Check common root-level keys
+    for key in ['tables', 'extracted_tables', 'all_tables']:
+        if key in data and data[key]:
+            root_tables = data[key]
+            print(f"Found {len(root_tables)} tables in root key: {key}")
+            break
+    
+    # If root tables exist, use only those (they're likely aggregated)
+    if root_tables:
+        return [t for t in root_tables if t and t != {}]
+    
+    # Otherwise, collect from pages but be very careful about duplicates
     all_tables = []
-    seen_combinations = set()
-    
-    # Check pages first (most likely location)
     if 'pages' in data:
         for page_num, page in enumerate(data['pages'], 1):
             page_tables = page.get('tables', [])
             if page_tables:
-                for table in page_tables:
-                    if not table or table == {}:
-                        continue
-                    
-                    # Create unique identifier: page + rough position/size
-                    table_data = table.get('data', [])
-                    if not table_data:
-                        continue
-                    
-                    # Use page number + data size as unique identifier
-                    unique_id = f"{page_num}_{len(str(table_data))}"
-                    
-                    # Only add if we haven't seen this combination
-                    if unique_id not in seen_combinations:
-                        seen_combinations.add(unique_id)
-                        all_tables.append(table)
+                print(f"Page {page_num} has {len(page_tables)} tables")
+                all_tables.extend(page_tables)
     
-    # If no tables in pages, check root level
-    if not all_tables:
-        for key in ['tables', 'extracted_tables', 'all_tables']:
-            if key in data and data[key]:
-                root_tables = data[key]
-                if isinstance(root_tables, list):
-                    all_tables = [t for t in root_tables if t and t != {}]
-                else:
-                    all_tables = [root_tables] if root_tables else []
-                break
-    
-    return all_tables
+    return [t for t in all_tables if t and t != {}]
 
-def count_total_tables_fixed(results):
-    """Fixed counting with Streamlit debug output"""
+def count_total_tables_debug(results):
+    """Count tables with detailed debugging"""
     total_tables = 0
     
-    st.write("### 🔢 TABLE COUNTING DEBUG")
+    print("\n=== TABLE COUNTING DEBUG ===")
     
     for file_name, data in results.items():
-        st.write(f"**📄 Processing: {file_name}**")
+        print(f"\n📄 Processing: {file_name}")
         
-        file_tables = get_tables_from_data_fixed(data)
+        file_tables = get_tables_from_data_simple(data)
         file_count = len(file_tables)
         total_tables += file_count
         
-        st.write(f"✅ **Final count for {file_name}: {file_count} tables**")
+        print(f"✅ Final count for {file_name}: {file_count} tables")
         
         # Show table details
         for i, table in enumerate(file_tables[:5], 1):  # Show first 5
             method = table.get('method', 'unknown')
             page = table.get('page_number', 'unknown')
             confidence = table.get('confidence', 'N/A')
-            st.write(f"  Table {i}: Method={method}, Page={page}, Confidence={confidence}")
-        
-        if len(file_tables) > 5:
-            st.write(f"  ... and {len(file_tables) - 5} more tables")
+            print(f"  Table {i}: Method={method}, Page={page}, Confidence={confidence}")
     
-    st.write(f"**🎯 TOTAL TABLES: {total_tables}**")
+    print(f"\n🎯 TOTAL TABLES: {total_tables}")
+    print("=== END COUNTING DEBUG ===\n")
     
     return total_tables
 
-# Main functions to replace in your code
+# Simple replacement functions for your main code
 def get_tables_from_data(data):
     """Main function - use this to replace your existing one"""
-    return get_tables_from_data_fixed(data)
+    return get_tables_from_data_simple(data)
 
 def count_total_tables(results):
     """Main function - use this to replace your existing one"""
-    # Show debug info in Streamlit
-    debug_table_structure_streamlit(results)
-    return count_total_tables_fixed(results)
+    return count_total_tables_debug(results)
     
 def convert_table_to_dataframe(table_data):
     """Convert various table formats to pandas DataFrame"""
