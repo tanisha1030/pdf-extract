@@ -213,7 +213,7 @@ def main():
             st.subheader("📋 Uploaded Files")
             for i, file in enumerate(uploaded_files, 1):
                 file_size_mb = len(file.getvalue()) / (1024 * 1024)
-                st.write(f"{i}. **{file.name}** ({file_size_mb:.2f} MB)")
+                st.write(f"{i}. *{file.name}* ({file_size_mb:.2f} MB)")
             
             # Process button
             if st.button("🚀 Start Processing", type="primary", use_container_width=True):
@@ -352,7 +352,7 @@ def display_page_content(file_name, data, selected_page):
         # Text content
         page_text = page_data.get('text', '')
         if page_text:
-            st.markdown("**📝 Text Content:**")
+            st.markdown("📝 Text Content:")
             st.markdown(f"""
             <div class="text-preview">
                 {page_text.replace('\n', '<br>')}
@@ -363,34 +363,15 @@ def display_page_content(file_name, data, selected_page):
     
     with col2:
         # Page statistics
-        st.markdown("**📊 Page Statistics:**")
-        st.write(f"• **Characters:** {len(page_text):,}")
-        st.write(f"• **Words:** {len(page_text.split()) if page_text else 0:,}")
-        st.write(f"• **Images:** {len(page_data.get('images', []))}")
+        st.markdown("📊 Page Statistics:")
+        st.write(f"• *Characters:* {len(page_text):,}")
+        st.write(f"• *Words:* {len(page_text.split()) if page_text else 0:,}")
+        st.write(f"• *Images:* {len(page_data.get('images', []))}")
         
-        # Fixed page-specific tables count
-        page_tables = []
-        for table in data.get('extracted_tables', []):
-              table_page = table.get('page')
-            # Check multiple possible page field names and formats
-            table_page = None
-            if 'page' in table:
-                table_page = table['page']
-            elif 'page_number' in table:
-                table_page = table['page_number']
-            elif 'page_num' in table:
-                table_page = table['page_num']
-            
-            # Handle different page number formats
-            if table_page is not None:
-                # Convert to int if it's a string
-                if isinstance(table_page, str) and table_page.isdigit():
-                    table_page = int(table_page)
-                # Check if it matches the selected page
-                if table_page == selected_page or table_page == str(selected_page):
-                    page_tables.append(table)
-        
-        st.write(f"• **Tables:** {len(page_tables)}")
+        # Page-specific tables
+        page_tables = [table for table in data.get('extracted_tables', []) 
+                      if table.get('page') == selected_page]
+        st.write(f"• *Tables:* {len(page_tables)}")
 
 def display_results(results):
     """Display extraction results"""
@@ -414,12 +395,12 @@ def display_results(results):
     with col3:
         st.metric("🔤 Characters", f"{total_chars:,}")
     with col4:
-        st.metric("🖼️ Images", total_images)
+        st.metric("🖼 Images", total_images)
     with col5:
         st.metric("📊 Tables", total_tables)
     
     # Detailed results tabs
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📄 File Details", "📋 Page View", "📊 Tables", "🖼️ Images", "📈 Summary"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📄 File Details", "📋 Page View", "📊 Tables", "🖼 Images", "📈 Summary"])
     
     with tab1:
         st.subheader("File Processing Details")
@@ -429,31 +410,31 @@ def display_results(results):
                 col1, col2 = st.columns(2)
                 
                 with col1:
-                    st.write(f"**File Type:** {data['file_type']}")
-                    st.write(f"**Size:** {data.get('file_size_mb', 0):.2f} MB")
+                    st.write(f"*File Type:* {data['file_type']}")
+                    st.write(f"*Size:* {data.get('file_size_mb', 0):.2f} MB")
                     
                     if data['file_type'] == 'PDF':
-                        st.write(f"**Pages:** {data.get('page_count', 0)}")
-                        st.write(f"**Words:** {data.get('total_words', 0):,}")
-                        st.write(f"**Images:** {data.get('total_images', 0)}")
-                        st.write(f"**Tables:** {len(data.get('extracted_tables', []))}")
+                        st.write(f"*Pages:* {data.get('page_count', 0)}")
+                        st.write(f"*Words:* {data.get('total_words', 0):,}")
+                        st.write(f"*Images:* {data.get('total_images', 0)}")
+                        st.write(f"*Tables:* {len(data.get('extracted_tables', []))}")
                     
                     elif data['file_type'] == 'DOCX':
-                        st.write(f"**Paragraphs:** {len(data.get('paragraphs', []))}")
-                        st.write(f"**Words:** {data.get('total_words', 0):,}")
-                        st.write(f"**Tables:** {len(data.get('tables', []))}")
+                        st.write(f"*Paragraphs:* {len(data.get('paragraphs', []))}")
+                        st.write(f"*Words:* {data.get('total_words', 0):,}")
+                        st.write(f"*Tables:* {len(data.get('tables', []))}")
                     
                     elif data['file_type'] == 'PPTX':
-                        st.write(f"**Slides:** {data.get('total_slides', 0)}")
-                        st.write(f"**Words:** {data.get('total_words', 0):,}")
+                        st.write(f"*Slides:* {data.get('total_slides', 0)}")
+                        st.write(f"*Words:* {data.get('total_words', 0):,}")
                     
                     elif data['file_type'] == 'Excel':
-                        st.write(f"**Sheets:** {len(data.get('sheets', []))}")
+                        st.write(f"*Sheets:* {len(data.get('sheets', []))}")
                 
                 with col2:
                     # Show metadata
                     if data.get('metadata'):
-                        st.write("**Metadata:**")
+                        st.write("*Metadata:*")
                         for key, value in data['metadata'].items():
                             if isinstance(value, str) and len(value) > 50:
                                 st.write(f"  - {key}: {value[:50]}...")
@@ -484,7 +465,7 @@ def display_results(results):
                     col1, col2, col3 = st.columns([1, 2, 1])
                     
                     with col1:
-                        if st.button("⬅️ Previous", disabled=st.session_state.selected_pages.get(selected_file, 1) <= 1):
+                        if st.button("⬅ Previous", disabled=st.session_state.selected_pages.get(selected_file, 1) <= 1):
                             st.session_state.selected_pages[selected_file] = max(1, st.session_state.selected_pages.get(selected_file, 1) - 1)
                             st.rerun()
                     
@@ -499,7 +480,7 @@ def display_results(results):
                         st.session_state.selected_pages[selected_file] = selected_page
                     
                     with col3:
-                        if st.button("➡️ Next", disabled=st.session_state.selected_pages.get(selected_file, 1) >= page_count):
+                        if st.button("➡ Next", disabled=st.session_state.selected_pages.get(selected_file, 1) >= page_count):
                             st.session_state.selected_pages[selected_file] = min(page_count, st.session_state.selected_pages.get(selected_file, 1) + 1)
                             st.rerun()
                     
@@ -523,7 +504,7 @@ def display_results(results):
                 for table in data.get('extracted_tables', []):
                     method_counts[table.get('method', 'unknown')] += 1
             
-            st.write("**Extraction Methods Used:**")
+            st.write("*Extraction Methods Used:*")
             for method, count in method_counts.items():
                 st.write(f"  - {method}: {count} tables")
             
@@ -531,7 +512,7 @@ def display_results(results):
             for file_name, data in results.items():
                 tables = data.get('extracted_tables', [])
                 if tables:
-                    st.write(f"**📄 {file_name}**")
+                    st.write(f"📄 {file_name}")
                     
                     for i, table in enumerate(tables, 1):
                         with st.expander(f"Table {i} ({table.get('method', 'unknown')}) - Page {table.get('page', 'N/A')}"):
@@ -539,14 +520,14 @@ def display_results(results):
                             # Show table metadata
                             col1, col2 = st.columns(2)
                             with col1:
-                                st.write(f"**Method:** {table.get('method', 'unknown')}")
-                                st.write(f"**Page:** {table.get('page', 'N/A')}")
-                                st.write(f"**Confidence:** {table.get('confidence', 'unknown')}")
+                                st.write(f"*Method:* {table.get('method', 'unknown')}")
+                                st.write(f"*Page:* {table.get('page', 'N/A')}")
+                                st.write(f"*Confidence:* {table.get('confidence', 'unknown')}")
                             with col2:
                                 if 'shape' in table:
-                                    st.write(f"**Shape:** {table['shape'][0]} rows × {table['shape'][1]} columns")
+                                    st.write(f"*Shape:* {table['shape'][0]} rows × {table['shape'][1]} columns")
                                 if 'accuracy' in table:
-                                    st.write(f"**Accuracy:** {table['accuracy']:.1f}%")
+                                    st.write(f"*Accuracy:* {table['accuracy']:.1f}%")
                             
                             # Show table data with improved error handling
                             try:
@@ -583,19 +564,19 @@ def display_results(results):
             st.info("No tables were extracted from the uploaded documents.")
     
     with tab4:
-        st.subheader("🖼️ Extracted Images")
+        st.subheader("🖼 Extracted Images")
         
         if total_images > 0:
             for file_name, data in results.items():
                 if data.get('total_images', 0) > 0:
-                    st.write(f"**📄 {file_name}**")
+                    st.write(f"📄 {file_name}")
                     
                     # Show images by page (for PDFs)
                     if data['file_type'] == 'PDF':
                         for page in data.get('pages', []):
                             images = page.get('images', [])
                             if images:
-                                st.write(f"**Page {page['page_number']}:** {len(images)} images")
+                                st.write(f"*Page {page['page_number']}:* {len(images)} images")
                                 
                                 # Display images in columns
                                 cols = st.columns(min(3, len(images)))
@@ -616,12 +597,12 @@ def display_results(results):
                                             
                                             # Image metadata
                                             with st.expander(f"Image {idx + 1} Details"):
-                                                st.write(f"**Filename:** {os.path.basename(img['filename'])}")
-                                                st.write(f"**Size:** {img.get('width', 'N/A')}×{img.get('height', 'N/A')}")
-                                                st.write(f"**Colorspace:** {img.get('colorspace', 'N/A')}")
-                                                st.write(f"**File size:** {img.get('size_bytes', 'N/A')} bytes")
+                                                st.write(f"*Filename:* {os.path.basename(img['filename'])}")
+                                                st.write(f"*Size:* {img.get('width', 'N/A')}×{img.get('height', 'N/A')}")
+                                                st.write(f"*Colorspace:* {img.get('colorspace', 'N/A')}")
+                                                st.write(f"*File size:* {img.get('size_bytes', 'N/A')} bytes")
                                                 if 'bbox' in img:
-                                                    st.write(f"**Position:** {img['bbox']}")
+                                                    st.write(f"*Position:* {img['bbox']}")
                                         
                                         except Exception as e:
                                             st.error(f"Error displaying image: {str(e)}")
@@ -630,7 +611,7 @@ def display_results(results):
                     elif data['file_type'] in ['DOCX', 'PPTX']:
                         images = data.get('images', [])
                         if images:
-                            st.write(f"**Images found:** {len(images)}")
+                            st.write(f"*Images found:* {len(images)}")
                             
                             cols = st.columns(min(3, len(images)))
                             
@@ -647,10 +628,10 @@ def display_results(results):
                                             st.info(f"📸 Image {idx + 1}")
                                         
                                         with st.expander(f"Image {idx + 1} Details"):
-                                            st.write(f"**Type:** {img.get('type', 'N/A')}")
-                                            st.write(f"**Size:** {img.get('size_bytes', 'N/A')} bytes")
+                                            st.write(f"*Type:* {img.get('type', 'N/A')}")
+                                            st.write(f"*Size:* {img.get('size_bytes', 'N/A')} bytes")
                                             if 'format' in img:
-                                                st.write(f"**Format:** {img['format']}")
+                                                st.write(f"*Format:* {img['format']}")
                                     
                                     except Exception as e:
                                         st.error(f"Error displaying image: {str(e)}")
@@ -662,12 +643,12 @@ def display_results(results):
         
         # File type distribution
         file_types = Counter(data['file_type'] for data in results.values())
-        st.write("**File Type Distribution:**")
+        st.write("*File Type Distribution:*")
         for file_type, count in file_types.items():
             st.write(f"  - {file_type}: {count} files")
         
         # Processing statistics
-        st.write("\n**Processing Statistics:**")
+        st.write("\n*Processing Statistics:*")
         st.write(f"  - Total files processed: {total_files}")
         st.write(f"  - Total words extracted: {total_words:,}")
         st.write(f"  - Total characters: {total_chars:,}")
@@ -681,13 +662,13 @@ def display_results(results):
                 all_fonts.update(data.get('fonts_used', []))
         
         if all_fonts:
-            st.write(f"\n**Fonts Used:** {', '.join(sorted(all_fonts))}")
+            st.write(f"\n*Fonts Used:* {', '.join(sorted(all_fonts))}")
         
         # Success message
         st.success("🎉 All documents processed successfully!")
     
     # Download section
-    st.header("⬇️ Download Results")
+    st.header("⬇ Download Results")
     
     col1, col2 = st.columns(2)
     
@@ -718,54 +699,156 @@ def display_results(results):
                         for i, table in enumerate(data.get('extracted_tables', []), 1):
                             try:
                                 if table.get('data'):
-                                    page_info = f"_page_{table.get('page', 'unknown')}" if table.get('page') else ""
-                                    csv_name = f"{file_base}_table_{i}{page_info}_{table.get('method', 'unknown')}.csv"
+                                    page_info = f"page{table.get('page', 'unknown')}" if table.get('page') else ""
+                                    csv_name = f"{file_base}table{i}{page_info}_{table.get('method', 'unknown')}.csv"
                                     
                                     if isinstance(table['data'], list) and isinstance(table['data'][0], dict):
-                                        # DataFrame format
                                         df = pd.DataFrame(table['data'])
-                                        csv_data = df.to_csv(index=False)
-                                        zip_file.writestr(csv_name, csv_data)
-                                        table_count += 1
                                     elif isinstance(table['data'], list):
-                                        # List of lists format
-                                        if table['data']:
-                                            # Clean column names to avoid duplicates
-                                            headers = table['data'][0] if table['data'] else []
-                                            if headers:
-                                                # Generate unique column names if duplicates exist
-                                                seen = {}
-                                                new_headers = []
-                                                for h in headers:
-                                                    if h in seen:
-                                                        seen[h] += 1
-                                                        new_headers.append(f"{h}_{seen[h]}")
-                                                    else:
-                                                        seen[h] = 0
-                                                        new_headers.append(h)
-                                                headers = new_headers
-                                            
-                                            df = pd.DataFrame(table['data'][1:], columns=headers)
-                                            csv_data = df.to_csv(index=False)
-                                            zip_file.writestr(csv_name, csv_data)
-                                            table_count += 1
+                                        # Clean column names for CSV export
+                                        headers = table['data'][0] if table['data'] else []
+                                        if headers:
+                                            seen = {}
+                                            new_headers = []
+                                            for h in headers:
+                                                if h in seen:
+                                                    seen[h] += 1
+                                                    new_headers.append(f"{h}_{seen[h]}")
+                                                else:
+                                                    seen[h] = 0
+                                                    new_headers.append(h)
+                                            headers = new_headers
+                                        
+                                        df = pd.DataFrame(table['data'][1:], columns=headers)
+                                    else:
+                                        continue
+                                    
+                                    csv_data = df.to_csv(index=False)
+                                    zip_file.writestr(csv_name, csv_data)
+                                    table_count += 1
                             except Exception as e:
-                                st.error(f"Error processing table {i} from {file_name}: {str(e)}")
                                 continue
                 
                 if table_count > 0:
-                    zip_buffer.seek(0)
                     st.download_button(
-                        label=f"Download {table_count} Tables as ZIP",
+                        label=f"Download {table_count} Tables (ZIP)",
                         data=zip_buffer.getvalue(),
                         file_name=f"extracted_tables_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
                         mime="application/zip",
                         use_container_width=True
                     )
                 else:
-                    st.error("No tables could be processed for download")
+                    st.error("No tables could be exported to CSV format.")
         else:
-            st.info("No tables available for download")
+            st.info("No tables available for download.")
+    
+    # Text content download
+    st.subheader("📝 Text Content Download")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("📄 Download All Text Content", use_container_width=True):
+            # Combine all text content
+            all_text = []
+            for file_name, data in results.items():
+                all_text.append(f"=== {file_name} ===\n")
+                
+                if data['file_type'] == 'PDF':
+                    for page in data.get('pages', []):
+                        all_text.append(f"\n--- Page {page['page_number']} ---\n")
+                        all_text.append(page.get('text', ''))
+                
+                elif data['file_type'] == 'DOCX':
+                    for paragraph in data.get('paragraphs', []):
+                        all_text.append(paragraph.get('text', ''))
+                
+                elif data['file_type'] == 'PPTX':
+                    for slide in data.get('slides', []):
+                        all_text.append(f"\n--- Slide {slide.get('slide_number', 'N/A')} ---\n")
+                        all_text.append(slide.get('text', ''))
+                
+                elif data['file_type'] == 'Excel':
+                    for sheet in data.get('sheets', []):
+                        all_text.append(f"\n--- Sheet: {sheet.get('name', 'N/A')} ---\n")
+                        # Add sheet data if available
+                        if sheet.get('data'):
+                            all_text.append(str(sheet['data']))
+                
+                all_text.append("\n\n")
+            
+            combined_text = '\n'.join(all_text)
+            st.download_button(
+                label="Download Combined Text",
+                data=combined_text,
+                file_name=f"extracted_text_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                mime="text/plain",
+                use_container_width=True
+            )
+    
+    with col2:
+        if st.button("📊 Download Summary Report", use_container_width=True):
+            # Create summary report
+            summary_lines = []
+            summary_lines.append("DOCUMENT EXTRACTION SUMMARY REPORT")
+            summary_lines.append("=" * 50)
+            summary_lines.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            summary_lines.append("")
+            
+            summary_lines.append("PROCESSING OVERVIEW:")
+            summary_lines.append(f"  - Files processed: {total_files}")
+            summary_lines.append(f"  - Total words: {total_words:,}")
+            summary_lines.append(f"  - Total characters: {total_chars:,}")
+            summary_lines.append(f"  - Images extracted: {total_images}")
+            summary_lines.append(f"  - Tables extracted: {total_tables}")
+            summary_lines.append("")
+            
+            summary_lines.append("FILE DETAILS:")
+            for file_name, data in results.items():
+                summary_lines.append(f"  📄 {file_name}")
+                summary_lines.append(f"    - Type: {data['file_type']}")
+                summary_lines.append(f"    - Size: {data.get('file_size_mb', 0):.2f} MB")
+                
+                if data['file_type'] == 'PDF':
+                    summary_lines.append(f"    - Pages: {data.get('page_count', 0)}")
+                    summary_lines.append(f"    - Words: {data.get('total_words', 0):,}")
+                    summary_lines.append(f"    - Images: {data.get('total_images', 0)}")
+                    summary_lines.append(f"    - Tables: {len(data.get('extracted_tables', []))}")
+                
+                elif data['file_type'] == 'DOCX':
+                    summary_lines.append(f"    - Paragraphs: {len(data.get('paragraphs', []))}")
+                    summary_lines.append(f"    - Words: {data.get('total_words', 0):,}")
+                    summary_lines.append(f"    - Tables: {len(data.get('tables', []))}")
+                
+                elif data['file_type'] == 'PPTX':
+                    summary_lines.append(f"    - Slides: {data.get('total_slides', 0)}")
+                    summary_lines.append(f"    - Words: {data.get('total_words', 0):,}")
+                
+                elif data['file_type'] == 'Excel':
+                    summary_lines.append(f"    - Sheets: {len(data.get('sheets', []))}")
+                
+                summary_lines.append("")
+            
+            # Add metadata section
+            summary_lines.append("METADATA INFORMATION:")
+            for file_name, data in results.items():
+                if data.get('metadata'):
+                    summary_lines.append(f"  📄 {file_name}:")
+                    for key, value in data['metadata'].items():
+                        if isinstance(value, str) and len(value) > 100:
+                            summary_lines.append(f"    - {key}: {value[:100]}...")
+                        else:
+                            summary_lines.append(f"    - {key}: {value}")
+                    summary_lines.append("")
+            
+            summary_report = '\n'.join(summary_lines)
+            st.download_button(
+                label="Download Summary Report",
+                data=summary_report,
+                file_name=f"summary_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                mime="text/plain",
+                use_container_width=True
+            )
 
-if __name__ == "__main__":
+# Run the main function
+if _name_ == "_main_":
     main()
