@@ -254,19 +254,44 @@ def process_documents(uploaded_files, options):
             
             # Save uploaded files to temporary directory
             file_paths = []
+            total_size_mb = 0
             for i, uploaded_file in enumerate(uploaded_files):
                 file_path = os.path.join(temp_dir, uploaded_file.name)
                 with open(file_path, 'wb') as f:
                     f.write(uploaded_file.getvalue())
                 file_paths.append(file_path)
+                total_size_mb += len(uploaded_file.getvalue()) / (1024 * 1024)
                 
                 progress = (i + 1) / (len(uploaded_files) + 1)
                 progress_bar.progress(progress)
                 status_text.text(f"Saving file {i + 1}/{len(uploaded_files)}: {uploaded_file.name}")
             
-            # Initialize extractor
-            status_text.text("Initializing document extractor...")
-            extractor = ComprehensiveDocumentExtractor()
+            # Configure extractor based on file sizes
+            status_text.text("Configuring document extractor...")
+            
+            # Adaptive configuration based on total file size
+            if total_size_mb > 500:  # Very large files
+                memory_limit_mb = 2048
+                max_workers = min(4, os.cpu_count() or 2)
+                extract_formatting = False
+                st.info(f"🔧 Large files detected ({total_size_mb:.1f} MB total). Using optimized processing with {max_workers} workers and {memory_limit_mb} MB memory limit.")
+            elif total_size_mb > 100:  # Medium files
+                memory_limit_mb = 1536
+                max_workers = min(6, os.cpu_count() or 4)
+                extract_formatting = False
+                st.info(f"⚙️ Medium-sized files detected ({total_size_mb:.1f} MB total). Using balanced processing with {max_workers} workers.")
+            else:  # Small files
+                memory_limit_mb = 1024
+                max_workers = min(8, os.cpu_count() or 4)
+                extract_formatting = True
+                st.info(f"✨ Standard processing mode for {total_size_mb:.1f} MB total file size.")
+            
+            # Initialize extractor with optimized settings
+            extractor = ComprehensiveDocumentExtractor(
+                max_workers=max_workers,
+                memory_limit_mb=memory_limit_mb,
+                extract_formatting=extract_formatting
+            )
             
             # Process files
             status_text.text("Processing documents...")
@@ -275,7 +300,8 @@ def process_documents(uploaded_files, options):
             results = {}
             for i, file_path in enumerate(file_paths):
                 file_name = os.path.basename(file_path)
-                status_text.text(f"Processing {file_name}...")
+                file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
+                status_text.text(f"Processing {file_name} ({file_size_mb:.1f} MB)...")
                 
                 try:
                     file_ext = os.path.splitext(file_path)[1].lower()
@@ -293,6 +319,13 @@ def process_documents(uploaded_files, options):
                     
                     if result:
                         results[file_name] = result
+                        
+                        # Show processing mode info
+                        processing_mode = result.get('processing_mode', 'standard')
+                        if processing_mode == 'optimized':
+                            st.success(f"✅ {file_name} processed in optimized mode for large files")
+                        else:
+                            st.success(f"✅ {file_name} processed successfully")
                         
                 except Exception as e:
                     st.error(f"Error processing {file_name}: {str(e)}")
@@ -317,6 +350,11 @@ def process_documents(uploaded_files, options):
                 
                 progress_bar.progress(1.0)
                 status_text.text("✅ Processing completed!")
+                
+                # Show summary of processing modes
+                optimized_files = [name for name, data in results.items() if data.get('processing_mode') == 'optimized']
+                if optimized_files:
+                    st.info(f"📊 {len(optimized_files)} file(s) processed in optimized mode for large file handling: {', '.join(optimized_files)}")
                 
                 # Auto-refresh to show results
                 time.sleep(1)
