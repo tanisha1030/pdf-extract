@@ -243,7 +243,22 @@ def main():
         display_results(st.session_state.extraction_results)
 
 def process_documents(uploaded_files, options):
-    """Process uploaded documents"""
+    """Process uploaded documents with memory optimization"""
+    
+    # Check for large files and warn user
+    large_files = []
+    total_size_mb = 0
+    for file in uploaded_files:
+        file_size_mb = len(file.getvalue()) / (1024 * 1024)
+        total_size_mb += file_size_mb
+        if file_size_mb > 50:
+            large_files.append((file.name, file_size_mb))
+    
+    if large_files:
+        st.warning(f"⚠️ Large files detected: {', '.join([f'{name} ({size:.1f}MB)' for name, size in large_files])}. Processing will use memory-efficient mode.")
+    
+    if total_size_mb > 200:
+        st.warning(f"⚠️ Total file size is {total_size_mb:.1f}MB. Processing may take longer and some features may be limited to preserve memory.")
     
     # Create temporary directory for processing
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -252,17 +267,36 @@ def process_documents(uploaded_files, options):
             progress_bar = st.progress(0)
             status_text = st.empty()
             
-            # Save uploaded files to temporary directory
+            # Save uploaded files to temporary directory with streaming for large files
             file_paths = []
             for i, uploaded_file in enumerate(uploaded_files):
                 file_path = os.path.join(temp_dir, uploaded_file.name)
-                with open(file_path, 'wb') as f:
-                    f.write(uploaded_file.getvalue())
+                file_size_mb = len(uploaded_file.getvalue()) / (1024 * 1024)
+                
+                status_text.text(f"Saving file {i + 1}/{len(uploaded_files)}: {uploaded_file.name} ({file_size_mb:.1f}MB)")
+                
+                # Stream large files to disk to avoid memory issues
+                if file_size_mb > 50:
+                    # Write in chunks for large files
+                    with open(file_path, 'wb') as f:
+                        file_data = uploaded_file.getvalue()
+                        chunk_size = 1024 * 1024  # 1MB chunks
+                        for chunk_start in range(0, len(file_data), chunk_size):
+                            chunk_end = min(chunk_start + chunk_size, len(file_data))
+                            f.write(file_data[chunk_start:chunk_end])
+                    # Clear the file data from memory
+                    del file_data
+                    import gc
+                    gc.collect()
+                else:
+                    # Normal processing for smaller files
+                    with open(file_path, 'wb') as f:
+                        f.write(uploaded_file.getvalue())
+                
                 file_paths.append(file_path)
                 
                 progress = (i + 1) / (len(uploaded_files) + 1)
                 progress_bar.progress(progress)
-                status_text.text(f"Saving file {i + 1}/{len(uploaded_files)}: {uploaded_file.name}")
             
             # Initialize extractor
             status_text.text("Initializing document extractor...")
@@ -275,10 +309,21 @@ def process_documents(uploaded_files, options):
             results = {}
             for i, file_path in enumerate(file_paths):
                 file_name = os.path.basename(file_path)
-                status_text.text(f"Processing {file_name}...")
+                file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
+                
+                status_text.text(f"Processing {file_name} ({file_size_mb:.1f}MB)...")
                 
                 try:
                     file_ext = os.path.splitext(file_path)[1].lower()
+                    
+                    # Add memory check before processing each file
+                    import psutil
+                    memory_usage = psutil.virtual_memory().percent
+                    if memory_usage > 85:
+                        st.warning(f"⚠️ High memory usage ({memory_usage:.1f}%). Processing may be slower.")
+                        # Force garbage collection
+                        import gc
+                        gc.collect()
                     
                     if file_ext == '.pdf':
                         result = extractor.extract_pdf_comprehensive(file_path)
@@ -294,12 +339,27 @@ def process_documents(uploaded_files, options):
                     if result:
                         results[file_name] = result
                         
+                        # For large files, optionally clear some data to save memory
+                        if file_size_mb > 100 and 'pages' in result:
+                            # Keep only essential page data for very large files
+                            for page in result['pages']:
+                                if len(page.get('formatted_text', [])) > 50:
+                                    page['formatted_text'] = page['formatted_text'][:50]  # Limit formatted text
+                        
+                except MemoryError:
+                    st.error(f"❌ Insufficient memory to process {file_name}. Try processing smaller files or restart the application.")
+                    continue
                 except Exception as e:
                     st.error(f"Error processing {file_name}: {str(e)}")
                     continue
                 
                 progress = 0.1 + (0.8 * (i + 1) / len(file_paths))
                 progress_bar.progress(progress)
+                
+                # Force garbage collection between files for large batches
+                if len(uploaded_files) > 3:
+                    import gc
+                    gc.collect()
             
             # Save results
             if results:
@@ -318,8 +378,12 @@ def process_documents(uploaded_files, options):
                 progress_bar.progress(1.0)
                 status_text.text("✅ Processing completed!")
                 
+                # Show memory usage summary
+                final_memory = psutil.virtual_memory().percent
+                status_text.text(f"✅ Processing completed! Memory usage: {final_memory:.1f}%")
+                
                 # Auto-refresh to show results
-                time.sleep(1)
+                time.sleep(2)
                 st.rerun()
             else:
                 st.error("❌ No files were successfully processed.")

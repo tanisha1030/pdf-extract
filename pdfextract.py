@@ -68,10 +68,17 @@ class ComprehensiveDocumentExtractor:
         os.makedirs('extracted_tables', exist_ok=True)
 
     def extract_pdf_comprehensive(self, pdf_path):
-        """Extract comprehensive data from PDF with parallel page processing"""
+        """Extract comprehensive data from PDF with memory-efficient processing"""
         try:
             print(f"📄 Processing PDF: {os.path.basename(pdf_path)}")
+            
+            # Check file size and adjust processing approach
+            file_size_mb = round(os.path.getsize(pdf_path) / (1024*1024), 2)
+            is_large_file = file_size_mb > 50  # Consider files > 50MB as large
+            
             doc = fitz.open(pdf_path)
+            page_count = len(doc)
+            
             pdf_data = {
                 'filename': os.path.basename(pdf_path),
                 'file_type': 'PDF',
@@ -82,8 +89,9 @@ class ComprehensiveDocumentExtractor:
                 'fonts_used': [],
                 'total_words': 0,
                 'total_characters': 0,
-                'page_count': len(doc),
-                'file_size_mb': round(os.path.getsize(pdf_path) / (1024*1024), 2)
+                'page_count': page_count,
+                'file_size_mb': file_size_mb,
+                'is_large_file': is_large_file
             }
 
             # Extract metadata safely
@@ -94,36 +102,62 @@ class ComprehensiveDocumentExtractor:
             except:
                 pdf_data['metadata'] = {}
 
-            # Process pages with parallel execution
-            def process_page(page_num):
-                try:
-                    page = doc[page_num]
-                    return self.extract_page_data(page, page_num + 1, pdf_path)
-                except Exception as e:
-                    print(f"⚠️  Error in page {page_num + 1}: {str(e)}")
-                    return None
+            # Determine processing strategy based on file size
+            if is_large_file:
+                print(f"  📊 Large file detected ({file_size_mb:.1f}MB), using memory-efficient processing...")
+                max_workers = 2  # Reduce threads for large files
+                batch_size = 10  # Process pages in batches
+            else:
+                max_workers = 4
+                batch_size = min(50, page_count)  # Limit batch size
+            
+            # Process pages in batches to manage memory
+            all_fonts = set()
+            
+            for batch_start in range(0, page_count, batch_size):
+                batch_end = min(batch_start + batch_size, page_count)
+                batch_pages = range(batch_start, batch_end)
+                
+                print(f"  🔄 Processing pages {batch_start + 1}-{batch_end}...")
+                
+                # Process batch with limited parallelism
+                def process_page(page_num):
+                    try:
+                        page = doc[page_num]
+                        page_data = self.extract_page_data(page, page_num + 1, pdf_path, is_large_file)
+                        return page_data
+                    except Exception as e:
+                        print(f"⚠️  Error in page {page_num + 1}: {str(e)}")
+                        return None
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-                futures = [executor.submit(process_page, p) for p in range(len(doc))]
-                for future in concurrent.futures.as_completed(futures):
-                    page_data = future.result()
-                    if page_data:
-                        pdf_data['pages'].append(page_data)
-                        # Accumulate totals
-                        pdf_data['total_images'] += len(page_data['images'])
-                        pdf_data['total_tables'] += len(page_data['tables'])
-                        pdf_data['total_words'] += page_data['word_count']
-                        pdf_data['total_characters'] += page_data['char_count']
+                with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = [executor.submit(process_page, p) for p in batch_pages]
+                    for future in concurrent.futures.as_completed(futures):
+                        page_data = future.result()
+                        if page_data:
+                            pdf_data['pages'].append(page_data)
+                            # Accumulate totals
+                            pdf_data['total_images'] += len(page_data['images'])
+                            pdf_data['total_tables'] += len(page_data['tables'])
+                            pdf_data['total_words'] += page_data['word_count']
+                            pdf_data['total_characters'] += page_data['char_count']
+                            # Collect fonts
+                            all_fonts.update(page_data.get('fonts', []))
+                
+                # Force garbage collection between batches for large files
+                if is_large_file:
+                    import gc
+                    gc.collect()
 
-            # Extract unique fonts
-            all_fonts = []
-            for page in pdf_data['pages']:
-                all_fonts.extend(page.get('fonts', []))
-            pdf_data['fonts_used'] = list(set(all_fonts))
+            pdf_data['fonts_used'] = list(all_fonts)
 
-            # Extract tables using multiple methods
+            # Extract tables using multiple methods with memory optimization
             print("  📊 Extracting tables...")
-            pdf_data['extracted_tables'] = self.extract_tables_multiple_methods(pdf_path)
+            if is_large_file:
+                # For large files, extract tables page by page to avoid memory issues
+                pdf_data['extracted_tables'] = self.extract_tables_memory_efficient(pdf_path, page_count)
+            else:
+                pdf_data['extracted_tables'] = self.extract_tables_multiple_methods(pdf_path)
 
             doc.close()
             print(f"  ✅ PDF processed: {pdf_data['page_count']} pages, {pdf_data['total_words']} words")
@@ -133,8 +167,8 @@ class ComprehensiveDocumentExtractor:
             print(f"❌ Error processing PDF {pdf_path}: {str(e)}")
             return None
 
-    def extract_page_data(self, page, page_num, pdf_path):
-        """Extract data from one PDF page (detailed)"""
+    def extract_page_data(self, page, page_num, pdf_path, is_large_file=False):
+        """Extract data from one PDF page with memory optimization for large files"""
         page_data = {
             'page_number': page_num,
             'text': '',
@@ -162,23 +196,29 @@ class ComprehensiveDocumentExtractor:
                         for span in line["spans"]:
                             text = span.get("text", "")
                             page_text += text
-                            # Store formatted text
-                            page_data['formatted_text'].append({
-                                'text': text,
-                                'font': span.get('font', 'Unknown'),
-                                'size': round(span.get('size', 0), 2),
-                                'flags': span.get('flags', 0),
-                                'color': span.get('color', 0),
-                                'bbox': span.get('bbox', [0, 0, 0, 0])
-                            })
+                            # For large files, limit formatted text storage to reduce memory
+                            if not is_large_file or len(page_data['formatted_text']) < 100:
+                                page_data['formatted_text'].append({
+                                    'text': text,
+                                    'font': span.get('font', 'Unknown'),
+                                    'size': round(span.get('size', 0), 2),
+                                    'flags': span.get('flags', 0),
+                                    'color': span.get('color', 0),
+                                    'bbox': span.get('bbox', [0, 0, 0, 0])
+                                })
                             fonts_on_page.append(span.get('font', 'Unknown'))
+            
             page_data['text'] = page_text
             page_data['fonts'] = list(set(fonts_on_page))
             page_data['word_count'] = len(page_text.split())
             page_data['char_count'] = len(page_text)
 
-            # Extract images
-            page_data['images'] = self.extract_images_from_page(page, page_num, pdf_path)
+            # Extract images with memory optimization
+            if is_large_file:
+                # For large files, limit image extraction or extract metadata only
+                page_data['images'] = self.extract_images_metadata_only(page, page_num, pdf_path)
+            else:
+                page_data['images'] = self.extract_images_from_page(page, page_num, pdf_path)
 
             # Extract tables
             page_data['tables'] = self.extract_tables_from_page(page)
@@ -211,6 +251,32 @@ class ComprehensiveDocumentExtractor:
                     images.append(img_info)
                 except Exception as e:
                     print(f"⚠️  Error extracting image {img_index} on page {page_num}: {str(e)}")
+                    continue
+        except:
+            print(f"⚠️  No images on page {page_num}")
+        return images
+
+    def extract_images_metadata_only(self, page, page_num, pdf_path):
+        """Extract only image metadata (no actual image data) for large files"""
+        images = []
+        try:
+            image_list = page.get_images()
+            for img_index, img in enumerate(image_list):
+                try:
+                    xref = img[0]
+                    base_image = page.parent.extract_image(xref)
+                    # Store metadata only, not the actual image data
+                    img_info = {
+                        'filename': f"page_{page_num}_img_{img_index+1}.png",
+                        'width': base_image["width"],
+                        'height': base_image["height"],
+                        'colorspace': base_image.get("colorspace", "Unknown"),
+                        'size_bytes': len(base_image["image"]),
+                        'metadata_only': True  # Flag to indicate this is metadata only
+                    }
+                    images.append(img_info)
+                except Exception as e:
+                    print(f"⚠️  Error extracting image metadata {img_index} on page {page_num}: {str(e)}")
                     continue
         except:
             print(f"⚠️  No images on page {page_num}")
@@ -324,6 +390,90 @@ class ComprehensiveDocumentExtractor:
                                     })
             except:
                 pass
+        return all_tables
+
+    def extract_tables_memory_efficient(self, pdf_path, page_count):
+        """Extract tables with memory optimization for large files"""
+        all_tables = []
+        
+        # Process pages in smaller chunks to avoid memory issues
+        chunk_size = 5  # Process 5 pages at a time
+        
+        for start_page in range(1, page_count + 1, chunk_size):
+            end_page = min(start_page + chunk_size - 1, page_count)
+            pages_str = f"{start_page}-{end_page}" if start_page != end_page else str(start_page)
+            
+            print(f"    🔄 Extracting tables from pages {pages_str}...")
+            
+            # Using tabula with limited pages
+            if HAS_TABULA:
+                try:
+                    tables = tabula.read_pdf(
+                        pdf_path, 
+                        pages=pages_str, 
+                        multiple_tables=True, 
+                        silent=True,
+                        stream=True,  # Use stream mode for better memory usage
+                        guess=False   # Disable guessing to speed up processing
+                    )
+                    for i, table in enumerate(tables):
+                        if not table.empty and table.shape[0] > 1 and table.shape[1] > 1:
+                            if self.validate_extracted_table(table):
+                                # Limit table size for memory efficiency
+                                if table.shape[0] > 1000:  # Limit rows
+                                    table = table.head(1000)
+                                    
+                                all_tables.append({
+                                    'method': 'tabula_chunked',
+                                    'pages': pages_str,
+                                    'table_index': i,
+                                    'data': table.to_dict('records'),
+                                    'shape': table.shape,
+                                    'columns': table.columns.tolist(),
+                                    'confidence': 'medium',
+                                    'truncated': table.shape[0] == 1000
+                                })
+                except Exception as e:
+                    print(f"    ⚠️  Tabula error for pages {pages_str}: {str(e)}")
+            
+            # Using pdfplumber with page-by-page processing
+            if HAS_PDFPLUMBER and len(all_tables) < 50:  # Limit total tables to prevent memory issues
+                try:
+                    with pdfplumber.open(pdf_path) as pdf:
+                        for page_idx in range(start_page - 1, min(end_page, len(pdf.pages))):
+                            page = pdf.pages[page_idx]
+                            tables = page.extract_tables()
+                            for t_idx, table in enumerate(tables):
+                                if table and len(table) > 1 and len(table[0]) > 1:
+                                    # Limit table size
+                                    if len(table) > 100:
+                                        table = table[:100]
+                                        truncated = True
+                                    else:
+                                        truncated = False
+                                        
+                                    if self.validate_pdfplumber_table(table):
+                                        all_tables.append({
+                                            'method': 'pdfplumber_chunked',
+                                            'page': page_idx + 1,
+                                            'table_index': t_idx,
+                                            'data': table,
+                                            'shape': (len(table), len(table[0]) if table else 0),
+                                            'confidence': 'medium',
+                                            'truncated': truncated
+                                        })
+                except Exception as e:
+                    print(f"    ⚠️  PDFPlumber error for pages {pages_str}: {str(e)}")
+            
+            # Force garbage collection between chunks
+            import gc
+            gc.collect()
+            
+            # Stop processing if we have too many tables to prevent memory issues
+            if len(all_tables) > 100:
+                print(f"    ⚠️  Stopping table extraction after {len(all_tables)} tables to preserve memory")
+                break
+        
         return all_tables
 
     def validate_extracted_table(self, df):
