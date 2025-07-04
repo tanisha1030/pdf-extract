@@ -166,48 +166,39 @@ DEFAULT_OPTIONS = {
 }
 
 def get_tables_from_data(data):
-    """Extract tables from data with comprehensive key checking"""
+    """Extract tables from data with proper structure handling"""
     tables = []
     
-    # Check all possible keys where tables might be stored
-    possible_keys = ['tables', 'extracted_tables', 'all_tables', 'table_data']
+    # Primary check: tables at root level
+    if 'tables' in data and data['tables']:
+        tables = data['tables']
     
-    for key in possible_keys:
-        if key in data and data[key]:
-            if isinstance(data[key], list):
-                tables.extend(data[key])
-            elif isinstance(data[key], dict):
-                # If it's a dict, try to extract tables from it
-                tables.append(data[key])
+    # Fallback: check extracted_tables
+    elif 'extracted_tables' in data and data['extracted_tables']:
+        tables = data['extracted_tables']
     
-    # Also check if tables are stored in pages
-    if 'pages' in data:
+    # If no tables at root level, check pages
+    elif 'pages' in data and not tables:
         for page in data['pages']:
             if 'tables' in page and page['tables']:
-                if isinstance(page['tables'], list):
-                    tables.extend(page['tables'])
-                else:
-                    tables.append(page['tables'])
+                tables.extend(page['tables'])
     
-    # Remove duplicates and None values
-    unique_tables = []
-    for table in tables:
-        if table and table not in unique_tables:
-            unique_tables.append(table)
+    # Ensure we return a list and filter out None/empty values
+    if not isinstance(tables, list):
+        tables = [tables] if tables else []
     
-    return unique_tables
+    # Filter out None/empty tables
+    valid_tables = [table for table in tables if table is not None]
+    
+    return valid_tables
 
 def count_total_tables(results):
-    """Count total tables across all files with comprehensive checking"""
+    """Count total tables across all files"""
     total_tables = 0
     
     for file_name, data in results.items():
         file_tables = get_tables_from_data(data)
         total_tables += len(file_tables)
-        
-        # Debug information
-        if len(file_tables) > 0:
-            st.write(f"DEBUG: {file_name} has {len(file_tables)} tables")
     
     return total_tables
 
