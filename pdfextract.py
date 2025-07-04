@@ -1,4 +1,4 @@
-import fitz  # PyMuPDF
+import concurrent.futures
 import os
 import json
 import pandas as pd
@@ -9,29 +9,26 @@ import zipfile
 import tempfile
 import warnings
 import re
-warnings.filterwarnings('ignore')
+import fitz  # PyMuPDF
 
-# Try importing optional libraries with fallbacks
+# Optional libraries
 try:
     import pdfplumber
     HAS_PDFPLUMBER = True
 except ImportError:
     HAS_PDFPLUMBER = False
-    print("Warning: pdfplumber not available. Some table extraction features may be limited.")
 
 try:
     import tabula
     HAS_TABULA = True
 except ImportError:
     HAS_TABULA = False
-    print("Warning: tabula-py not available. Some table extraction features may be limited.")
 
 try:
     import camelot
     HAS_CAMELOT = True
 except ImportError:
     HAS_CAMELOT = False
-    print("Warning: camelot-py not available. Some table extraction features may be limited.")
 
 try:
     import cv2
@@ -39,46 +36,42 @@ try:
     HAS_CV2 = True
 except ImportError:
     HAS_CV2 = False
-    print("Warning: OpenCV not available. Some image processing features may be limited.")
 
 try:
     from docx import Document
     HAS_DOCX = True
 except ImportError:
     HAS_DOCX = False
-    print("Warning: python-docx not available. DOCX processing will be skipped.")
 
 try:
     from pptx import Presentation
     HAS_PPTX = True
 except ImportError:
     HAS_PPTX = False
-    print("Warning: python-pptx not available. PPTX processing will be skipped.")
 
 try:
     import openpyxl
     HAS_OPENPYXL = True
 except ImportError:
     HAS_OPENPYXL = False
-    print("Warning: openpyxl not available. Excel processing may be limited.")
+
 
 class ComprehensiveDocumentExtractor:
     def __init__(self):
         self.extracted_data = {}
         self.supported_formats = ['.pdf', '.docx', '.pptx', '.xlsx', '.xls']
         self.setup_directories()
-    
+
     def setup_directories(self):
         """Create necessary directories"""
         os.makedirs('extracted_images', exist_ok=True)
         os.makedirs('extracted_tables', exist_ok=True)
-    
+
     def extract_pdf_comprehensive(self, pdf_path):
-        """Extract comprehensive data from PDF with error handling"""
+        """Extract comprehensive data from PDF with parallel page processing"""
         try:
             print(f"📄 Processing PDF: {os.path.basename(pdf_path)}")
             doc = fitz.open(pdf_path)
-            
             pdf_data = {
                 'filename': os.path.basename(pdf_path),
                 'file_type': 'PDF',
@@ -92,7 +85,7 @@ class ComprehensiveDocumentExtractor:
                 'page_count': len(doc),
                 'file_size_mb': round(os.path.getsize(pdf_path) / (1024*1024), 2)
             }
-            
+
             # Extract metadata safely
             try:
                 metadata = doc.metadata
@@ -100,47 +93,48 @@ class ComprehensiveDocumentExtractor:
                     pdf_data['metadata'] = {k: v for k, v in metadata.items() if v}
             except:
                 pdf_data['metadata'] = {}
-            
-            # Process each page with progress indicator
-            for page_num in range(len(doc)):
-                if page_num % 10 == 0:
-                    print(f"  📃 Processing page {page_num + 1}/{len(doc)}")
-                
+
+            # Process pages with parallel execution
+            def process_page(page_num):
                 try:
                     page = doc[page_num]
-                    page_data = self.extract_page_data(page, page_num + 1, pdf_path)
-                    pdf_data['pages'].append(page_data)
-                    
-                    # Accumulate totals
-                    pdf_data['total_images'] += len(page_data['images'])
-                    pdf_data['total_tables'] += len(page_data['tables'])
-                    pdf_data['total_words'] += page_data['word_count']
-                    pdf_data['total_characters'] += page_data['char_count']
-                    
+                    return self.extract_page_data(page, page_num + 1, pdf_path)
                 except Exception as e:
-                    print(f"  ⚠️  Error on page {page_num + 1}: {str(e)}")
-                    continue
-            
+                    print(f"⚠️  Error in page {page_num + 1}: {str(e)}")
+                    return None
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+                futures = [executor.submit(process_page, p) for p in range(len(doc))]
+                for future in concurrent.futures.as_completed(futures):
+                    page_data = future.result()
+                    if page_data:
+                        pdf_data['pages'].append(page_data)
+                        # Accumulate totals
+                        pdf_data['total_images'] += len(page_data['images'])
+                        pdf_data['total_tables'] += len(page_data['tables'])
+                        pdf_data['total_words'] += page_data['word_count']
+                        pdf_data['total_characters'] += page_data['char_count']
+
             # Extract unique fonts
             all_fonts = []
             for page in pdf_data['pages']:
                 all_fonts.extend(page.get('fonts', []))
             pdf_data['fonts_used'] = list(set(all_fonts))
-            
+
             # Extract tables using multiple methods
             print("  📊 Extracting tables...")
             pdf_data['extracted_tables'] = self.extract_tables_multiple_methods(pdf_path)
-            
+
             doc.close()
             print(f"  ✅ PDF processed: {pdf_data['page_count']} pages, {pdf_data['total_words']} words")
             return pdf_data
-            
+
         except Exception as e:
             print(f"❌ Error processing PDF {pdf_path}: {str(e)}")
             return None
-    
+
     def extract_page_data(self, page, page_num, pdf_path):
-        """Extract comprehensive data from a single page"""
+        """Extract data from one PDF page (detailed)"""
         page_data = {
             'page_number': page_num,
             'text': '',
@@ -156,21 +150,19 @@ class ComprehensiveDocumentExtractor:
             },
             'rotation': page.rotation
         }
-        
         try:
             # Extract text with formatting
             text_dict = page.get_text("dict")
             page_text = ""
             fonts_on_page = []
-            
+
             for block in text_dict.get("blocks", []):
                 if "lines" in block:
                     for line in block["lines"]:
                         for span in line["spans"]:
                             text = span.get("text", "")
                             page_text += text
-                            
-                            # Store formatted text with details
+                            # Store formatted text
                             page_data['formatted_text'].append({
                                 'text': text,
                                 'font': span.get('font', 'Unknown'),
@@ -179,47 +171,36 @@ class ComprehensiveDocumentExtractor:
                                 'color': span.get('color', 0),
                                 'bbox': span.get('bbox', [0, 0, 0, 0])
                             })
-                            
                             fonts_on_page.append(span.get('font', 'Unknown'))
-            
             page_data['text'] = page_text
             page_data['fonts'] = list(set(fonts_on_page))
             page_data['word_count'] = len(page_text.split())
             page_data['char_count'] = len(page_text)
-            
+
             # Extract images
             page_data['images'] = self.extract_images_from_page(page, page_num, pdf_path)
-            
-            # Extract tables (improved detection)
+
+            # Extract tables
             page_data['tables'] = self.extract_tables_from_page(page)
-            
+
         except Exception as e:
-            print(f"    ⚠️  Error extracting from page {page_num}: {str(e)}")
-        
+            print(f"⚠️  Error extracting page {page_num}: {str(e)}")
         return page_data
-    
+
     def extract_images_from_page(self, page, page_num, pdf_path):
-        """Extract images from a page with better error handling"""
+        """Extract images from a page with error handling"""
         images = []
-        
         try:
             image_list = page.get_images()
-            
             for img_index, img in enumerate(image_list):
                 try:
                     xref = img[0]
                     base_image = page.parent.extract_image(xref)
                     image_bytes = base_image["image"]
-                    
-                    # Create safe filename
-                    base_name = os.path.splitext(os.path.basename(pdf_path))[0]
-                    img_name = f"extracted_images/{base_name}_page_{page_num}_img_{img_index + 1}.png"
-                    
-                    # Save image
+                    filename_base = os.path.splitext(os.path.basename(pdf_path))[0]
+                    img_name = f"extracted_images/{filename_base}_page_{page_num}_img_{img_index+1}.png"
                     with open(img_name, "wb") as img_file:
                         img_file.write(image_bytes)
-                    
-                    # Get image info
                     img_info = {
                         'filename': img_name,
                         'width': base_image["width"],
@@ -227,140 +208,72 @@ class ComprehensiveDocumentExtractor:
                         'colorspace': base_image.get("colorspace", "Unknown"),
                         'size_bytes': len(image_bytes)
                     }
-                    
                     images.append(img_info)
-                    
                 except Exception as e:
-                    print(f"      ⚠️  Error extracting image {img_index} from page {page_num}: {str(e)}")
+                    print(f"⚠️  Error extracting image {img_index} on page {page_num}: {str(e)}")
                     continue
-                    
-        except Exception as e:
-            print(f"    ⚠️  Error accessing images on page {page_num}: {str(e)}")
-        
+        except:
+            print(f"⚠️  No images on page {page_num}")
         return images
-    
+
     def is_likely_table(self, text_lines):
-        """Improved heuristic to determine if text lines represent a table"""
+        """Heuristic to detect tables based on lines"""
         if len(text_lines) < 2:
             return False
-        
-        # Check for common table indicators
-        table_indicators = 0
-        
-        # Look for consistent separators across lines
+        # Basic heuristic: presence of separators, formatting, numeric columns...
         separator_patterns = [r'\t', r'\s{2,}', r'\|', r',', r';']
-        consistent_separators = 0
-        
         for pattern in separator_patterns:
-            separator_counts = [len(re.findall(pattern, line)) for line in text_lines]
-            if len(set(separator_counts)) == 1 and separator_counts[0] > 0:
-                consistent_separators += 1
-        
-        if consistent_separators > 0:
-            table_indicators += 2
-        
-        # Check for numeric content (common in tables)
-        numeric_lines = 0
-        for line in text_lines:
-            if re.search(r'\d+', line):
-                numeric_lines += 1
-        
+            counts = [len(re.findall(pattern, line)) for line in text_lines]
+            if len(set(counts)) == 1 and counts[0] > 0:
+                return True
+        # Numeric content heuristic
+        numeric_lines = sum(1 for line in text_lines if re.search(r'\d+', line))
         if numeric_lines / len(text_lines) > 0.5:
-            table_indicators += 1
-        
-        # Check for consistent column-like alignment
-        if len(text_lines) > 2:
-            # Check if lines have similar lengths (indicating potential columns)
-            line_lengths = [len(line.strip()) for line in text_lines if line.strip()]
-            if line_lengths:
-                avg_length = sum(line_lengths) / len(line_lengths)
-                similar_lengths = sum(1 for length in line_lengths if abs(length - avg_length) < avg_length * 0.3)
-                if similar_lengths / len(line_lengths) > 0.7:
-                    table_indicators += 1
-        
-        # Check for header-like patterns (first line different from others)
-        if len(text_lines) > 1:
-            first_line = text_lines[0].strip()
-            other_lines = [line.strip() for line in text_lines[1:] if line.strip()]
-            
-            # Check if first line might be headers (contains letters, others more numeric)
-            if first_line and other_lines:
-                first_has_letters = bool(re.search(r'[a-zA-Z]', first_line))
-                others_mostly_numeric = sum(1 for line in other_lines if re.search(r'\d', line)) / len(other_lines) > 0.6
-                
-                if first_has_letters and others_mostly_numeric:
-                    table_indicators += 1
-        
-        # Exclude common false positives
-        false_positive_indicators = 0
-        
-        # Check for paragraph-like text
-        for line in text_lines:
-            if len(line.strip()) > 100:  # Very long lines are likely paragraphs
-                false_positive_indicators += 1
-        
-        # Check for sentence-like structures
-        sentence_patterns = [r'\.', r'\?', r'!']
-        for line in text_lines:
-            for pattern in sentence_patterns:
-                if re.search(pattern, line):
-                    false_positive_indicators += 1
-                    break
-        
-        # Decision logic
-        if false_positive_indicators > len(text_lines) * 0.3:
-            return False
-        
-        return table_indicators >= 2
-    
+            return True
+        # Similar line lengths
+        lengths = [len(line.strip()) for line in text_lines]
+        if lengths:
+            avg = sum(lengths)/len(lengths)
+            similar = sum(1 for l in lengths if abs(l - avg) < avg*0.3)
+            if similar / len(lengths) > 0.7:
+                return True
+        return False
+
     def extract_tables_from_page(self, page):
-        """Improved table detection from page using better heuristics"""
+        """Detect tables heuristically from page"""
         tables = []
         try:
             text_dict = page.get_text("dict")
-            
             for block in text_dict.get("blocks", []):
                 if "lines" in block:
                     lines = block["lines"]
-                    if len(lines) >= 3:  # Minimum lines for a table
-                        # Extract text lines
+                    if len(lines) >= 3:
                         text_lines = []
                         for line in lines:
-                            row_text = ""
-                            for span in line["spans"]:
-                                row_text += span.get("text", "") + " "
+                            row_text = " ".join(span.get("text", "") for span in line["spans"])
                             text_lines.append(row_text.strip())
-                        
-                        # Filter out empty lines
-                        text_lines = [line for line in text_lines if line.strip()]
-                        
-                        # Check if this looks like a table
-                        if len(text_lines) >= 2 and self.is_likely_table(text_lines):
+                        if self.is_likely_table(text_lines):
                             tables.append({
                                 'bbox': block.get('bbox', [0, 0, 0, 0]),
                                 'data': text_lines,
-                                'method': 'improved_detection',
+                                'method': 'heuristic',
                                 'confidence': 'medium'
                             })
-            
-        except Exception as e:
-            print(f"      ⚠️  Error extracting tables from page: {str(e)}")
-        
+        except:
+            pass
         return tables
-    
+
     def extract_tables_multiple_methods(self, pdf_path):
-        """Extract tables using multiple libraries for better accuracy"""
+        """Extract tables with multiple methods; can be expanded"""
         all_tables = []
-        
-        # Method 1: Using tabula-py
+
+        # Using tabula
         if HAS_TABULA:
             try:
                 print("    📊 Trying tabula...")
-                tabula_tables = tabula.read_pdf(pdf_path, pages='all', multiple_tables=True, silent=True)
-                valid_tables = 0
-                for i, table in enumerate(tabula_tables):
+                tables = tabula.read_pdf(pdf_path, pages='all', multiple_tables=True, silent=True)
+                for i, table in enumerate(tables):
                     if not table.empty and table.shape[0] > 1 and table.shape[1] > 1:
-                        # Additional validation: check if it's actually tabular data
                         if self.validate_extracted_table(table):
                             all_tables.append({
                                 'method': 'tabula',
@@ -370,22 +283,17 @@ class ComprehensiveDocumentExtractor:
                                 'columns': table.columns.tolist(),
                                 'confidence': 'high'
                             })
-                            valid_tables += 1
-                print(f"      ✅ Tabula found {valid_tables} valid tables")
             except Exception as e:
-                print(f"      ⚠️  Tabula extraction failed: {str(e)}")
-        
-        # Method 2: Using camelot (for lattice tables)
+                print(f"    ⚠️  Tabula error: {str(e)}")
+        # Using camelot
         if HAS_CAMELOT:
             try:
                 print("    📊 Trying camelot...")
-                camelot_tables = camelot.read_pdf(pdf_path, pages='all', flavor='lattice')
-                valid_tables = 0
-                for i, table in enumerate(camelot_tables):
+                tables = camelot.read_pdf(pdf_path, pages='all', flavor='lattice')
+                for i, table in enumerate(tables):
                     if not table.df.empty and table.df.shape[0] > 1 and table.df.shape[1] > 1:
-                        # Check accuracy threshold
                         accuracy = getattr(table, 'accuracy', 0)
-                        if accuracy > 50:  # Only include tables with >50% accuracy
+                        if accuracy > 50:
                             all_tables.append({
                                 'method': 'camelot_lattice',
                                 'table_index': i,
@@ -394,82 +302,60 @@ class ComprehensiveDocumentExtractor:
                                 'accuracy': accuracy,
                                 'confidence': 'high' if accuracy > 80 else 'medium'
                             })
-                            valid_tables += 1
-                print(f"      ✅ Camelot found {valid_tables} valid tables")
             except Exception as e:
-                print(f"      ⚠️  Camelot extraction failed: {str(e)}")
-        
-        # Method 3: Using pdfplumber
+                print(f"    ⚠️  Camelot error: {str(e)}")
+        # Using pdfplumber
         if HAS_PDFPLUMBER:
             try:
                 print("    📊 Trying pdfplumber...")
-                table_count = 0
                 with pdfplumber.open(pdf_path) as pdf:
-                    for page_num, page in enumerate(pdf.pages):
+                    for p_idx, page in enumerate(pdf.pages):
                         tables = page.extract_tables()
-                        for i, table in enumerate(tables):
+                        for t_idx, table in enumerate(tables):
                             if table and len(table) > 1 and len(table[0]) > 1:
-                                # Validate table content
                                 if self.validate_pdfplumber_table(table):
                                     all_tables.append({
                                         'method': 'pdfplumber',
-                                        'page': page_num + 1,
-                                        'table_index': i,
+                                        'page': p_idx + 1,
+                                        'table_index': t_idx,
                                         'data': table,
                                         'shape': (len(table), len(table[0]) if table else 0),
                                         'confidence': 'medium'
                                     })
-                                    table_count += 1
-                print(f"      ✅ PDFplumber found {table_count} valid tables")
-            except Exception as e:
-                print(f"      ⚠️  PDFplumber extraction failed: {str(e)}")
-        
+            except:
+                pass
         return all_tables
-    
+
     def validate_extracted_table(self, df):
-        """Validate if a pandas DataFrame represents a real table"""
+        """Validate pandas DataFrame as table"""
         if df.empty or df.shape[0] < 2 or df.shape[1] < 2:
             return False
-        
-        # Check for meaningful content
-        text_content = df.astype(str).values.flatten()
-        non_empty_cells = [cell for cell in text_content if cell.strip() and cell.strip() != 'nan']
-        
-        if len(non_empty_cells) < df.shape[0] * df.shape[1] * 0.3:  # At least 30% cells should have content
+        # Must have content
+        non_empty = df.astype(str).values.flatten()
+        non_empty_cells = [cell for cell in non_empty if cell.strip() and cell.strip() != 'nan']
+        if len(non_empty_cells) < df.size * 0.3:
             return False
-        
-        # Check for variety in content (not all cells the same)
-        unique_values = set(non_empty_cells)
-        if len(unique_values) < 2:
+        if len(set(non_empty_cells)) < 2:
             return False
-        
         return True
-    
+
     def validate_pdfplumber_table(self, table):
-        """Validate if a pdfplumber table represents real tabular data"""
+        """Validate pdfplumber table"""
         if not table or len(table) < 2:
             return False
-        
-        # Count non-empty cells
-        non_empty_cells = 0
         total_cells = 0
-        unique_values = set()
-        
+        non_empty_cells = 0
+        unique_vals = set()
         for row in table:
             for cell in row:
                 total_cells += 1
                 if cell and cell.strip():
                     non_empty_cells += 1
-                    unique_values.add(cell.strip())
-        
-        # Must have at least 30% non-empty cells
+                    unique_vals.add(cell.strip())
         if non_empty_cells < total_cells * 0.3:
             return False
-        
-        # Must have at least 2 unique values
-        if len(unique_values) < 2:
+        if len(unique_vals) < 2:
             return False
-        
         return True
     
     def extract_docx(self, docx_path):
