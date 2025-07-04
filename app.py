@@ -166,84 +166,81 @@ DEFAULT_OPTIONS = {
 }
 
 def get_tables_from_data(data):
-    """Extract tables from data with comprehensive debugging"""
+    """Extract tables from data - fixed to avoid duplicate counting"""
     tables = []
     
-    # Debug: Print the keys in the data structure
-    print(f"DEBUG: Data keys: {list(data.keys())}")
+    # Strategy: Only check ONE primary location to avoid duplicates
+    # Priority order: root-level tables first, then pages as fallback
     
-    # Check all possible locations where tables might be stored
-    possible_locations = [
-        ('tables', data.get('tables')),
-        ('extracted_tables', data.get('extracted_tables')),
-        ('all_tables', data.get('all_tables')),
-        ('table_data', data.get('table_data'))
-    ]
+    # Check root level first (most common for aggregated results)
+    if 'tables' in data and data['tables']:
+        tables = data['tables']
+    elif 'extracted_tables' in data and data['extracted_tables']:
+        tables = data['extracted_tables']
+    elif 'all_tables' in data and data['all_tables']:
+        tables = data['all_tables']
+    else:
+        # Only check pages if no root-level tables found
+        if 'pages' in data:
+            for page in data['pages']:
+                if 'tables' in page and page['tables']:
+                    tables.extend(page['tables'])
     
-    for location_name, location_data in possible_locations:
-        if location_data:
-            print(f"DEBUG: Found {location_name} with type: {type(location_data)}")
-            if isinstance(location_data, list):
-                print(f"DEBUG: {location_name} has {len(location_data)} items")
-                tables.extend(location_data)
-            elif isinstance(location_data, dict):
-                print(f"DEBUG: {location_name} is a dict with keys: {list(location_data.keys())}")
-                tables.append(location_data)
-            break  # Stop at first valid location to avoid duplicates
+    # Ensure we have a list
+    if not isinstance(tables, list):
+        tables = [tables] if tables else []
     
-    # If no tables found at root level, check in pages
-    if not tables and 'pages' in data:
-        print("DEBUG: No root-level tables found, checking pages...")
-        for page_idx, page in enumerate(data['pages']):
-            page_tables = page.get('tables', [])
-            if page_tables:
-                print(f"DEBUG: Page {page_idx + 1} has {len(page_tables)} tables")
-                tables.extend(page_tables)
+    # Remove duplicates and None values
+    valid_tables = []
+    seen_tables = set()
     
-    # Final validation
-    valid_tables = [table for table in tables if table is not None and table != {}]
-    print(f"DEBUG: Final valid table count: {len(valid_tables)}")
+    for table in tables:
+        if table is None or table == {}:
+            continue
+            
+        # Create a simple hash to detect duplicates
+        table_hash = str(table.get('page_number', '')) + str(table.get('method', '')) + str(len(str(table.get('data', ''))))
+        
+        if table_hash not in seen_tables:
+            seen_tables.add(table_hash)
+            valid_tables.append(table)
     
     return valid_tables
 
 def count_total_tables(results):
-    """Count total tables across all files with debugging"""
+    """Count total tables across all files"""
     total_tables = 0
     
-    print("\nDEBUG: Starting table count...")
     for file_name, data in results.items():
         file_tables = get_tables_from_data(data)
-        file_count = len(file_tables)
-        total_tables += file_count
-        print(f"DEBUG: {file_name} has {file_count} tables")
+        total_tables += len(file_tables)
     
-    print(f"DEBUG: Total tables across all files: {total_tables}")
     return total_tables
 
-# Alternative function to inspect the actual data structure
-def inspect_data_structure(results):
-    """Inspect the actual data structure to understand table storage"""
-    print("\n=== DATA STRUCTURE INSPECTION ===")
+# Alternative: More aggressive deduplication
+def get_tables_from_data_strict(data):
+    """Extract tables with strict deduplication"""
     
-    for file_name, data in results.items():
-        print(f"\nFile: {file_name}")
-        print(f"Top-level keys: {list(data.keys())}")
-        
-        # Check each key for potential table data
-        for key, value in data.items():
-            if 'table' in key.lower():
-                print(f"  {key}: {type(value)} - {len(value) if isinstance(value, (list, dict)) else 'N/A'}")
-        
-        # Check pages structure
+    # Try root level first
+    root_tables = (data.get('tables') or 
+                   data.get('extracted_tables') or 
+                   data.get('all_tables') or [])
+    
+    if root_tables:
+        # If we have root-level tables, use those exclusively
+        tables = root_tables if isinstance(root_tables, list) else [root_tables]
+    else:
+        # Only if no root tables, collect from pages
+        tables = []
         if 'pages' in data:
-            print(f"  Pages count: {len(data['pages'])}")
-            for i, page in enumerate(data['pages'][:3]):  # Show first 3 pages
-                print(f"    Page {i+1} keys: {list(page.keys())}")
-                for key, value in page.items():
-                    if 'table' in key.lower():
-                        print(f"      {key}: {type(value)} - {len(value) if isinstance(value, (list, dict)) else 'N/A'}")
+            for page in data['pages']:
+                page_tables = page.get('tables', [])
+                if page_tables:
+                    tables.extend(page_tables)
     
-    print("=== END INSPECTION ===\n")
+    # Remove None/empty and return
+    return [t for t in tables if t and t != {}]
+    
 def convert_table_to_dataframe(table_data):
     """Convert various table formats to pandas DataFrame"""
     try:
