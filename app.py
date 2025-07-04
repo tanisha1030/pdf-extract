@@ -351,7 +351,7 @@ def process_documents(uploaded_files, options):
                     f.write(uploaded_file.getvalue())
                 file_paths.append(file_path)
                 
-                progress = (i + 1) / (len(uploaded_files) + 1
+                progress = (i + 1) / (len(uploaded_files) + 1)
                 progress_bar.progress(progress)
                 status_text.text(f"Saving file {i + 1}/{len(uploaded_files)}: {uploaded_file.name}")
             
