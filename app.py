@@ -368,7 +368,7 @@ def display_page_content(file_name, data, selected_page):
         st.write(f"• **Words:** {len(page_text.split()) if page_text else 0:,}")
         st.write(f"• **Images:** {len(page_data.get('images', []))}")
         
-        # Page-specific tables
+        # Corrected table count for the page
         page_tables = [table for table in data.get('extracted_tables', []) 
                       if table.get('page') == selected_page]
         st.write(f"• **Tables:** {len(page_tables)}")
