@@ -1,20 +1,3 @@
-pasted
-
-fix this code entirely. the tables r not getting displayed correctly at all
-
-Edit
-Looking at your code, I can see the issue with table counting and display. The problem is in the table extraction logic - it's counting duplicates and not properly handling the table structure. Let me fix this entirely:
-
-
-Fixed PDF Extractor with Correct Table Handling
-Code 
-
-
-
-
-You are out of free messages until 8:30 PM
-
-
 import streamlit as st
 import os
 import json
