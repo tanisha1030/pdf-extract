@@ -370,7 +370,7 @@ def display_page_content(file_name, data, selected_page):
         
         # Corrected table count for the page
         page_tables = [table for table in data.get('extracted_tables', []) 
-                      if table.get('page') == selected_page]
+              if table.get('page') == selected_page or str(table.get('page', '')).strip() == str(selected_page)]
         st.write(f"• **Tables:** {len(page_tables)}")
 
 def display_results(results):
