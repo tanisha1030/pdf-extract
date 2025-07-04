@@ -165,6 +165,52 @@ DEFAULT_OPTIONS = {
     'max_workers': 4
 }
 
+def get_tables_from_data(data):
+    """Extract tables from data with comprehensive key checking"""
+    tables = []
+    
+    # Check all possible keys where tables might be stored
+    possible_keys = ['tables', 'extracted_tables', 'all_tables', 'table_data']
+    
+    for key in possible_keys:
+        if key in data and data[key]:
+            if isinstance(data[key], list):
+                tables.extend(data[key])
+            elif isinstance(data[key], dict):
+                # If it's a dict, try to extract tables from it
+                tables.append(data[key])
+    
+    # Also check if tables are stored in pages
+    if 'pages' in data:
+        for page in data['pages']:
+            if 'tables' in page and page['tables']:
+                if isinstance(page['tables'], list):
+                    tables.extend(page['tables'])
+                else:
+                    tables.append(page['tables'])
+    
+    # Remove duplicates and None values
+    unique_tables = []
+    for table in tables:
+        if table and table not in unique_tables:
+            unique_tables.append(table)
+    
+    return unique_tables
+
+def count_total_tables(results):
+    """Count total tables across all files with comprehensive checking"""
+    total_tables = 0
+    
+    for file_name, data in results.items():
+        file_tables = get_tables_from_data(data)
+        total_tables += len(file_tables)
+        
+        # Debug information
+        if len(file_tables) > 0:
+            st.write(f"DEBUG: {file_name} has {len(file_tables)} tables")
+    
+    return total_tables
+
 def convert_table_to_dataframe(table_data):
     """Convert various table formats to pandas DataFrame"""
     try:
@@ -462,8 +508,12 @@ def display_page_content(file_name, data, selected_page):
         st.write(f"• **Images:** {len(page_data.get('images', []))}")
         
         # Page-specific tables
-        page_tables = [table for table in data.get('tables', []) 
-                      if table.get('page_number', 1) == selected_page]
+        page_tables = []
+        all_tables = get_tables_from_data(data)
+        for table in all_tables:
+            if table.get('page_number', 1) == selected_page:
+                page_tables.append(table)
+        
         st.write(f"• **Tables:** {len(page_tables)}")
 
 def display_results(results):
@@ -477,12 +527,8 @@ def display_results(results):
     total_chars = sum(data.get('total_characters', 0) for data in results.values())
     total_images = sum(data.get('total_images', 0) for data in results.values())
     
-    # Fixed table counting - handle different possible key names
-    total_tables = 0
-    for data in results.values():
-        # Check different possible keys for tables
-        tables = data.get('tables', []) or data.get('extracted_tables', []) or []
-        total_tables += len(tables)
+    # Fixed table counting using the new function
+    total_tables = count_total_tables(results)
     
     # Statistics cards
     col1, col2, col3, col4, col5 = st.columns(5)
@@ -515,9 +561,9 @@ def display_results(results):
                     st.write(f"**Words:** {data.get('total_words', 0):,}")
                     st.write(f"**Images:** {data.get('total_images', 0)}")
                     
-                    # Handle different table key names
-                    tables = data.get('tables', []) or data.get('extracted_tables', []) or []
-                    st.write(f"**Tables:** {len(tables)}")
+                    # Use the new table counting function
+                    file_tables = get_tables_from_data(data)
+                    st.write(f"**Tables:** {len(file_tables)}")
                 
                 with col2:
                     # Show metadata
@@ -583,9 +629,8 @@ def display_results(results):
             # Table extraction methods summary
             method_counts = Counter()
             for data in results.values():
-                # Handle different possible keys for tables
-                tables = data.get('tables', []) or data.get('extracted_tables', []) or []
-                for table in tables:
+                file_tables = get_tables_from_data(data)
+                for table in file_tables:
                     method_counts[table.get('method', 'unknown')] += 1
             
             if method_counts:
@@ -595,13 +640,12 @@ def display_results(results):
             
             # Show tables by file
             for file_name, data in results.items():
-                # Handle different possible keys for tables
-                tables = data.get('tables', []) or data.get('extracted_tables', []) or []
+                file_tables = get_tables_from_data(data)
                 
-                if tables:
+                if file_tables:
                     st.write(f"**📄 {file_name}**")
                     
-                    for i, table in enumerate(tables, 1):
+                    for i, table in enumerate(file_tables, 1):
                         with st.expander(f"Table {i} - {table.get('method', 'unknown')} (Page {table.get('page_number', 'N/A')})"):
                             display_table_with_info(table, i, file_name)
         else:
