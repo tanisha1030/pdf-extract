@@ -8,6 +8,14 @@ import base64
 st.set_page_config(page_title="Universal Info Extractor", layout="wide")
 st.title("📄 Universal File Information Extractor")
 
+# Apply minimal styling for better structure
+st.markdown("""
+<style>
+    .summary-metrics { margin-top: 2rem; }
+    .metric-box { background-color: #f8f9fa; padding: 1rem; border-radius: 8px; text-align: center; }
+</style>
+""", unsafe_allow_html=True)
+
 @st.cache_resource(show_spinner=True)
 def process_pdf(file_bytes):
     return extract_from_pdf(BytesIO(file_bytes))
@@ -25,7 +33,7 @@ def process_excel(file_bytes):
     return extract_from_excel(BytesIO(file_bytes))
 
 uploaded_file = st.file_uploader(
-    "Upload a PDF, Word (.docx), PowerPoint (.pptx), or Excel (.xlsx) file",
+    "📤 Upload a PDF, Word (.docx), PowerPoint (.pptx), or Excel (.xlsx) file",
     type=["pdf", "docx", "pptx", "xlsx"]
 )
 
@@ -41,7 +49,7 @@ if uploaded_file is not None:
     file_type = uploaded_file.name.split(".")[-1].lower()
     file_bytes = uploaded_file.read()
 
-    with st.spinner("Processing file..."):
+    with st.spinner("⏳ Processing file..."):
         if file_type == "pdf":
             pages = process_pdf(file_bytes)
 
@@ -72,23 +80,31 @@ if uploaded_file is not None:
             }
 
             st.markdown("### 📋 Summary")
-            st.json(summary)
+            col1, col2, col3, col4, col5 = st.columns(5)
+            col1.metric("Pages", len(pages))
+            col2.metric("Words", total_words)
+            col3.metric("Characters", total_chars)
+            col4.metric("Images", total_images)
+            col5.metric("Tables", total_tables)
 
+            # Page selector after summary
             page_num = st.selectbox("Select Page", range(len(pages)), index=0)
             page = pages[page_num]
 
             st.markdown(f"## 📄 Page {page_num + 1}")
-            st.subheader("Text Content")
-            st.write(page["text"])
+            st.subheader("📝 Text Content")
+            st.code(page["text"], language='markdown')
 
-            st.subheader("Images")
-            for img in page["images"]:
-                st.image(img, use_container_width=True)
+            if page["images"]:
+                st.subheader("🖼️ Images")
+                for img in page["images"]:
+                    st.image(img, use_container_width=True)
 
-            st.subheader("Tables")
-            for i, table in enumerate(page["tables"]):
-                st.write(f"Table {i + 1}")
-                st.dataframe(table)
+            if page["tables"]:
+                st.subheader("📊 Tables")
+                for i, table in enumerate(page["tables"]):
+                    st.write(f"Table {i + 1}")
+                    st.dataframe(table, use_container_width=True)
 
         elif file_type == "docx":
             content = process_docx(file_bytes)
@@ -101,9 +117,13 @@ if uploaded_file is not None:
             json_output = {"text": content["text"]}
 
             st.markdown("### 📋 Summary")
-            st.json(summary)
-            st.subheader("Text Content")
-            st.write(content["text"])
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Characters", summary["text_chars"])
+            col2.metric("Words", summary["word_count"])
+            col3.metric("Paragraphs", summary["paragraphs"])
+
+            st.subheader("📝 Text Content")
+            st.code(content["text"], language='markdown')
 
         elif file_type == "pptx":
             slides = process_pptx(file_bytes)
@@ -115,24 +135,32 @@ if uploaded_file is not None:
             json_output = {"slides": slides}
 
             st.markdown("### 📋 Summary")
-            st.json(summary)
+            col1, col2 = st.columns(2)
+            col1.metric("Slides", summary["total_slides"])
+            col2.metric("Words", summary["total_words"])
+
             slide_num = st.selectbox("Select Slide", range(len(slides)))
-            st.subheader("Slide Text")
-            st.write(slides[slide_num]["text"])
+            st.subheader("📝 Slide Text")
+            st.code(slides[slide_num]["text"], language='markdown')
 
         elif file_type == "xlsx":
             sheets = process_excel(file_bytes)
             summary = {
                 "file_type": "XLSX",
+                "sheet_count": len(sheets),
                 "sheets": list(sheets.keys())
             }
             json_output = {"sheets": {k: v.to_dict() for k, v in sheets.items()}}
 
             st.markdown("### 📋 Summary")
-            st.json(summary)
+            col1, col2 = st.columns(2)
+            col1.metric("Sheets", summary["sheet_count"])
+            col2.write("🗂️ Sheet Names")
+            col2.write(", ".join(summary["sheets"]))
+
             sheet = st.selectbox("Select Sheet", list(sheets.keys()))
-            st.subheader(f"Sheet: {sheet}")
-            st.dataframe(sheets[sheet])
+            st.subheader(f"📄 Sheet: {sheet}")
+            st.dataframe(sheets[sheet], use_container_width=True)
 
         # --- Download Extracted JSON ---
         st.markdown("### 📦 Download Extracted JSON")
