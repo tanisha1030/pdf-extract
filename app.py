@@ -371,6 +371,7 @@ def display_page_content(file_name, data, selected_page):
         # Fixed page-specific tables count
         page_tables = []
         for table in data.get('extracted_tables', []):
+              table_page = table.get('page')
             # Check multiple possible page field names and formats
             table_page = None
             if 'page' in table:
@@ -386,7 +387,7 @@ def display_page_content(file_name, data, selected_page):
                 if isinstance(table_page, str) and table_page.isdigit():
                     table_page = int(table_page)
                 # Check if it matches the selected page
-                if table_page == selected_page:
+                if table_page == selected_page or table_page == str(selected_page):
                     page_tables.append(table)
         
         st.write(f"• **Tables:** {len(page_tables)}")
