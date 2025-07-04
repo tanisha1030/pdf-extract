@@ -5,8 +5,8 @@ from main_code import extract_from_pdf, extract_from_docx, extract_from_pptx, ex
 from io import BytesIO
 import base64
 
-st.set_page_config(page_title="Universal Info Extractor", layout="wide")
-st.title("📄 Universal File Information Extractor")
+st.set_page_config(page_title="Info Extractor", layout="wide")
+st.title("📄 File Information Extractor")
 
 # Styling
 st.markdown("""
