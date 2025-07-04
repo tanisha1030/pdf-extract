@@ -417,7 +417,7 @@ def display_results(results):
                         st.write(f"**Pages:** {data.get('page_count', 0)}")
                         st.write(f"**Words:** {data.get('total_words', 0):,}")
                         st.write(f"**Images:** {data.get('total_images', 0)}")
-                        st.write(f"**Tables:** {len(data.get('extracted_tables', []))}")
+                        st.write(f"**Tables:** {len(data.get('extracted_tables', 0))}")
                     
                     elif data['file_type'] == 'DOCX':
                         st.write(f"**Paragraphs:** {len(data.get('paragraphs', []))}")
