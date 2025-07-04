@@ -165,113 +165,42 @@ DEFAULT_OPTIONS = {
     'max_workers': 4
 }
 
-def debug_table_structure(results):
-    """Debug function to see exactly what's in your data"""
-    print("\n=== DETAILED TABLE STRUCTURE DEBUG ===")
-    
-    for file_name, data in results.items():
-        print(f"\n📄 FILE: {file_name}")
-        print(f"Top-level keys: {list(data.keys())}")
-        
-        # Check every key that might contain tables
-        for key in data.keys():
-            if 'table' in key.lower():
-                value = data[key]
-                print(f"  🔍 {key}: {type(value)}")
-                if isinstance(value, list):
-                    print(f"    - List length: {len(value)}")
-                    if len(value) > 0:
-                        print(f"    - First item type: {type(value[0])}")
-                        if isinstance(value[0], dict):
-                            print(f"    - First item keys: {list(value[0].keys())}")
-                elif isinstance(value, dict):
-                    print(f"    - Dict keys: {list(value.keys())}")
-        
-        # Check pages structure
-        if 'pages' in data and data['pages']:
-            print(f"  📑 Pages: {len(data['pages'])} pages")
-            
-            page_table_counts = []
-            for i, page in enumerate(data['pages']):
-                page_tables = 0
-                for key in page.keys():
-                    if 'table' in key.lower():
-                        if isinstance(page[key], list):
-                            page_tables += len(page[key])
-                        elif page[key]:
-                            page_tables += 1
-                
-                if page_tables > 0:
-                    page_table_counts.append(f"Page {i+1}: {page_tables}")
-            
-            if page_table_counts:
-                print(f"    - Tables per page: {', '.join(page_table_counts)}")
-    
-    print("=== END DEBUG ===\n")
-
-def get_tables_from_data_simple(data):
-    """Simplified table extraction - only count unique tables once"""
-    
-    # First, try to find tables at root level
-    root_tables = []
-    
-    # Check common root-level keys
-    for key in ['tables', 'extracted_tables', 'all_tables']:
-        if key in data and data[key]:
-            root_tables = data[key]
-            print(f"Found {len(root_tables)} tables in root key: {key}")
-            break
-    
-    # If root tables exist, use only those (they're likely aggregated)
-    if root_tables:
-        return [t for t in root_tables if t and t != {}]
-    
-    # Otherwise, collect from pages but be very careful about duplicates
-    all_tables = []
-    if 'pages' in data:
-        for page_num, page in enumerate(data['pages'], 1):
-            page_tables = page.get('tables', [])
-            if page_tables:
-                print(f"Page {page_num} has {len(page_tables)} tables")
-                all_tables.extend(page_tables)
-    
-    return [t for t in all_tables if t and t != {}]
-
-def count_total_tables_debug(results):
-    """Count tables with detailed debugging"""
-    total_tables = 0
-    
-    print("\n=== TABLE COUNTING DEBUG ===")
-    
-    for file_name, data in results.items():
-        print(f"\n📄 Processing: {file_name}")
-        
-        file_tables = get_tables_from_data_simple(data)
-        file_count = len(file_tables)
-        total_tables += file_count
-        
-        print(f"✅ Final count for {file_name}: {file_count} tables")
-        
-        # Show table details
-        for i, table in enumerate(file_tables[:5], 1):  # Show first 5
-            method = table.get('method', 'unknown')
-            page = table.get('page_number', 'unknown')
-            confidence = table.get('confidence', 'N/A')
-            print(f"  Table {i}: Method={method}, Page={page}, Confidence={confidence}")
-    
-    print(f"\n🎯 TOTAL TABLES: {total_tables}")
-    print("=== END COUNTING DEBUG ===\n")
-    
-    return total_tables
-
-# Simple replacement functions for your main code
 def get_tables_from_data(data):
-    """Main function - use this to replace your existing one"""
-    return get_tables_from_data_simple(data)
+    """Extract tables from the data structure with proper validation"""
+    tables = []
+    
+    # First check for root-level tables
+    if 'tables' in data and isinstance(data['tables'], list):
+        tables.extend([t for t in data['tables'] if t and isinstance(t, dict)])
+    
+    # Then check for page-level tables
+    if 'pages' in data and isinstance(data['pages'], list):
+        for page in data['pages']:
+            if 'tables' in page and isinstance(page['tables'], list):
+                tables.extend([t for t in page['tables'] if t and isinstance(t, dict)])
+    
+    # Filter out empty tables and ensure each has a 'data' field
+    valid_tables = []
+    for table in tables:
+        if not table:
+            continue
+        if 'data' not in table:
+            continue
+        if not table['data'] or (isinstance(table['data'], (list, dict)) and len(table['data']) == 0:
+            continue
+        valid_tables.append(table)
+    
+    return valid_tables
 
 def count_total_tables(results):
-    """Main function - use this to replace your existing one"""
-    return count_total_tables_debug(results)
+    """Count tables across all files with validation"""
+    total_tables = 0
+    
+    for file_name, data in results.items():
+        file_tables = get_tables_from_data(data)
+        total_tables += len(file_tables)
+    
+    return total_tables
     
 def convert_table_to_dataframe(table_data):
     """Convert various table formats to pandas DataFrame"""
@@ -589,7 +518,7 @@ def display_results(results):
     total_chars = sum(data.get('total_characters', 0) for data in results.values())
     total_images = sum(data.get('total_images', 0) for data in results.values())
     
-    # Fixed table counting using the new function
+    # Count tables using the corrected function
     total_tables = count_total_tables(results)
     
     # Statistics cards
@@ -623,7 +552,7 @@ def display_results(results):
                     st.write(f"**Words:** {data.get('total_words', 0):,}")
                     st.write(f"**Images:** {data.get('total_images', 0)}")
                     
-                    # Use the new table counting function
+                    # Use the corrected table counting function
                     file_tables = get_tables_from_data(data)
                     st.write(f"**Tables:** {len(file_tables)}")
                 
@@ -803,10 +732,9 @@ def display_results(results):
                     for file_name, data in results.items():
                         file_base = os.path.splitext(file_name)[0]
                         
-                        # Handle different possible keys for tables
-                        tables = data.get('tables', []) or data.get('extracted_tables', []) or []
+                        file_tables = get_tables_from_data(data)
                         
-                        for i, table in enumerate(tables, 1):
+                        for i, table in enumerate(file_tables, 1):
                             try:
                                 table_data = table.get('data')
                                 if table_data:
