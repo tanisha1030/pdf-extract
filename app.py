@@ -1,3 +1,20 @@
+pasted
+
+fix this code entirely. the tables r not getting displayed correctly at all
+
+Edit
+Looking at your code, I can see the issue with table counting and display. The problem is in the table extraction logic - it's counting duplicates and not properly handling the table structure. Let me fix this entirely:
+
+
+Fixed PDF Extractor with Correct Table Handling
+Code 
+
+
+
+
+You are out of free messages until 8:30 PM
+
+
 import streamlit as st
 import os
 import json
@@ -138,6 +155,15 @@ st.markdown("""
         border-left: 3px solid #667eea;
         margin-bottom: 1rem;
     }
+    
+    .debug-info {
+        background: #fff3cd;
+        padding: 0.5rem;
+        border-radius: 4px;
+        border-left: 3px solid #ffc107;
+        margin-bottom: 1rem;
+        font-size: 0.8em;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -165,43 +191,94 @@ DEFAULT_OPTIONS = {
     'max_workers': 4
 }
 
-def get_tables_from_data(data):
-    """Extract tables from the data structure with proper validation"""
-    tables = []
+def get_unique_tables_from_data(data):
+    """
+    Extract unique tables from the data structure, avoiding duplicates
+    """
+    unique_tables = []
+    seen_tables = set()
     
-    # First check for root-level tables
-    if 'tables' in data and isinstance(data['tables'], list):
-        tables.extend([t for t in data['tables'] if t and isinstance(t, dict)])
+    # Debug: Show data structure
+    st.write("🔍 **Debug: Data Structure Keys:**", list(data.keys()))
     
-    # Then check for page-level tables
-    if 'pages' in data and isinstance(data['pages'], list):
-        for page in data['pages']:
-            if 'tables' in page and isinstance(page['tables'], list):
-                tables.extend([t for t in page['tables'] if t and isinstance(t, dict)])
+    # Strategy 1: Check for aggregated tables at root level
+    possible_table_keys = [
+        'tables', 'extracted_tables', 'all_tables', 'table_data',
+        'tabula_tables', 'camelot_tables', 'pdfplumber_tables'
+    ]
     
-    # Filter out empty tables and ensure each has a 'data' field
-    valid_tables = []
-    for table in tables:
-        if not table:
-            continue
-        if 'data' not in table:
-            continue
-        if not table['data'] or (isinstance(table['data'], (list, dict)) and len(table['data']) == 0:
-            continue
-        valid_tables.append(table)
+    for key in possible_table_keys:
+        if key in data and data[key]:
+            tables = data[key]
+            if isinstance(tables, list):
+                st.write(f"📋 Found {len(tables)} tables in key '{key}'")
+                
+                for i, table in enumerate(tables):
+                    # Create a unique identifier for this table
+                    table_id = create_table_identifier(table, i)
+                    
+                    if table_id not in seen_tables:
+                        seen_tables.add(table_id)
+                        # Add metadata for better tracking
+                        table_with_meta = {
+                            'id': table_id,
+                            'source_key': key,
+                            'index': i,
+                            **table
+                        }
+                        unique_tables.append(table_with_meta)
     
-    return valid_tables
+    # Strategy 2: If no root-level tables, check pages (but be careful about duplicates)
+    if not unique_tables and 'pages' in data:
+        st.write("📄 No root-level tables found, checking pages...")
+        
+        page_table_count = 0
+        for page_num, page in enumerate(data['pages'], 1):
+            page_tables = page.get('tables', [])
+            if page_tables:
+                page_table_count += len(page_tables)
+                
+                for i, table in enumerate(page_tables):
+                    table_id = create_table_identifier(table, i, page_num)
+                    
+                    if table_id not in seen_tables:
+                        seen_tables.add(table_id)
+                        table_with_meta = {
+                            'id': table_id,
+                            'source_key': 'pages',
+                            'index': i,
+                            'page_number': page_num,
+                            **table
+                        }
+                        unique_tables.append(table_with_meta)
+        
+        st.write(f"📊 Found {page_table_count} tables across all pages")
+    
+    st.write(f"✅ **Final unique tables count: {len(unique_tables)}**")
+    return unique_tables
 
-def count_total_tables(results):
-    """Count tables across all files with validation"""
-    total_tables = 0
+def create_table_identifier(table, index, page_num=None):
+    """
+    Create a unique identifier for a table to detect duplicates
+    """
+    # Use multiple factors to create unique ID
+    factors = [
+        str(index),
+        table.get('method', 'unknown'),
+        str(page_num) if page_num else str(table.get('page_number', 'unknown')),
+        str(len(str(table.get('data', []))))[:10],  # First 10 chars of data length
+    ]
     
-    for file_name, data in results.items():
-        file_tables = get_tables_from_data(data)
-        total_tables += len(file_tables)
+    # If we have actual data, use a sample for uniqueness
+    if table.get('data'):
+        data = table['data']
+        if isinstance(data, list) and len(data) > 0:
+            # Use first row/column info for uniqueness
+            first_item = str(data[0])[:50] if data else ""
+            factors.append(first_item)
     
-    return total_tables
-    
+    return "_".join(factors)
+
 def convert_table_to_dataframe(table_data):
     """Convert various table formats to pandas DataFrame"""
     try:
@@ -217,7 +294,7 @@ def convert_table_to_dataframe(table_data):
             if 'data' in table_data:
                 return convert_table_to_dataframe(table_data['data'])
             else:
-                return pd.DataFrame(table_data)
+                return pd.DataFrame([table_data])
         
         elif isinstance(table_data, list):
             if not table_data:
@@ -237,7 +314,7 @@ def convert_table_to_dataframe(table_data):
                 else:
                     return pd.DataFrame(table_data)
             
-            # Handle single list
+            # Handle single list as a single row
             else:
                 return pd.DataFrame([table_data])
         
@@ -251,6 +328,13 @@ def convert_table_to_dataframe(table_data):
 
 def display_table_with_info(table, table_index, file_name):
     """Display a table with proper formatting and metadata"""
+    
+    # Debug info
+    st.markdown(f"""
+    <div class="debug-info">
+        <strong>Debug Info:</strong> Table ID: {table.get('id', 'N/A')}, Source: {table.get('source_key', 'N/A')}
+    </div>
+    """, unsafe_allow_html=True)
     
     # Table metadata
     st.markdown(f"""
@@ -288,17 +372,29 @@ def display_table_with_info(table, table_index, file_name):
             data=csv_data,
             file_name=f"{os.path.splitext(file_name)[0]}_table_{table_index}.csv",
             mime="text/csv",
-            key=f"download_{file_name}_{table_index}"
+            key=f"download_{file_name}_{table_index}_{table.get('id', 'unknown')}"
         )
         
         # Show raw data for debugging (optional)
         with st.expander("🔍 Show Raw Data (Debug)"):
+            st.write("**Table object keys:**", list(table.keys()))
+            st.write("**Data type:**", type(table_data))
             st.json(table_data)
     
     else:
         st.error("Could not convert table data to displayable format")
-        st.write("Raw table data:")
+        st.write("**Raw table data:**")
         st.json(table_data)
+
+def count_total_tables(results):
+    """Count total unique tables across all files"""
+    total_tables = 0
+    
+    for file_name, data in results.items():
+        file_tables = get_unique_tables_from_data(data)
+        total_tables += len(file_tables)
+    
+    return total_tables
 
 def main():
     # Header
@@ -500,7 +596,7 @@ def display_page_content(file_name, data, selected_page):
         
         # Page-specific tables
         page_tables = []
-        all_tables = get_tables_from_data(data)
+        all_tables = get_unique_tables_from_data(data)
         for table in all_tables:
             if table.get('page_number', 1) == selected_page:
                 page_tables.append(table)
@@ -518,7 +614,7 @@ def display_results(results):
     total_chars = sum(data.get('total_characters', 0) for data in results.values())
     total_images = sum(data.get('total_images', 0) for data in results.values())
     
-    # Count tables using the corrected function
+    # Fixed table counting using the new function
     total_tables = count_total_tables(results)
     
     # Statistics cards
@@ -552,8 +648,8 @@ def display_results(results):
                     st.write(f"**Words:** {data.get('total_words', 0):,}")
                     st.write(f"**Images:** {data.get('total_images', 0)}")
                     
-                    # Use the corrected table counting function
-                    file_tables = get_tables_from_data(data)
+                    # Use the new table counting function
+                    file_tables = get_unique_tables_from_data(data)
                     st.write(f"**Tables:** {len(file_tables)}")
                 
                 with col2:
@@ -617,24 +713,22 @@ def display_results(results):
         st.subheader("📊 Extracted Tables")
         
         if total_tables > 0:
-            # Table extraction methods summary
-            method_counts = Counter()
-            for data in results.values():
-                file_tables = get_tables_from_data(data)
-                for table in file_tables:
-                    method_counts[table.get('method', 'unknown')] += 1
-            
-            if method_counts:
-                st.write("**Extraction Methods Used:**")
-                for method, count in method_counts.items():
-                    st.write(f"  - {method}: {count} tables")
-            
             # Show tables by file
             for file_name, data in results.items():
-                file_tables = get_tables_from_data(data)
+                file_tables = get_unique_tables_from_data(data)
                 
                 if file_tables:
-                    st.write(f"**📄 {file_name}**")
+                    st.write(f"**📄 {file_name} - {len(file_tables)} tables**")
+                    
+                    # Table extraction methods summary for this file
+                    method_counts = Counter()
+                    for table in file_tables:
+                        method_counts[table.get('method', 'unknown')] += 1
+                    
+                    if method_counts:
+                        st.write("**Methods used in this file:**")
+                        for method, count in method_counts.items():
+                            st.write(f"  - {method}: {count} tables")
                     
                     for i, table in enumerate(file_tables, 1):
                         with st.expander(f"Table {i} - {table.get('method', 'unknown')} (Page {table.get('page_number', 'N/A')})"):
