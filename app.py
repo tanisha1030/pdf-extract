@@ -39,10 +39,11 @@ uploaded_file = st.file_uploader(
 
 summary = {}
 json_output = {}
+summary_text = ""
 
 def generate_download_button(data, filename, label):
     b64 = base64.b64encode(data.encode()).decode()
-    href = f'<a href="data:application/json;base64,{b64}" download="{filename}">{label}</a>'
+    href = f'<a href="data:application/octet-stream;base64,{b64}" download="{filename}">{label}</a>'
     return href
 
 if uploaded_file is not None:
@@ -53,7 +54,6 @@ if uploaded_file is not None:
         if file_type == "pdf":
             pages = process_pdf(file_bytes)
 
-            # --- Overall Summary ---
             total_words = sum(len(p["text"].split()) for p in pages)
             total_chars = sum(len(p["text"]) for p in pages)
             total_images = sum(len(p["images"]) for p in pages)
@@ -67,6 +67,15 @@ if uploaded_file is not None:
                 "total_images": total_images,
                 "total_tables": total_tables
             }
+
+            summary_text = f"""📄 PDF Summary
+-------------------------
+Total Pages     : {len(pages)}
+Total Words     : {total_words}
+Total Characters: {total_chars}
+Total Images    : {total_images}
+Total Tables    : {total_tables}
+"""
 
             json_output = {
                 "pages": [
@@ -87,18 +96,15 @@ if uploaded_file is not None:
             col4.metric("Images", total_images)
             col5.metric("Tables", total_tables)
 
-            # --- Page Selector ---
             page_num = st.selectbox("Select Page", range(len(pages)), index=0)
             page = pages[page_num]
 
-            st.markdown(f"## 📄 Page {page_num + 1}")
-
-            # --- Per Page Summary ---
             page_words = len(page["text"].split())
             page_chars = len(page["text"])
             page_images = len(page["images"])
             page_tables = len(page["tables"])
 
+            st.markdown(f"## 📄 Page {page_num + 1}")
             st.markdown("#### 📊 Page Summary")
             pc1, pc2, pc3, pc4, pc5 = st.columns(5)
             pc1.metric("Page", page_num + 1)
@@ -129,6 +135,14 @@ if uploaded_file is not None:
                 "word_count": len(content["text"].split()),
                 "paragraphs": content["text"].count("\n") + 1
             }
+
+            summary_text = f"""📝 Word Document Summary
+-------------------------
+Characters : {summary["text_chars"]}
+Words      : {summary["word_count"]}
+Paragraphs : {summary["paragraphs"]}
+"""
+
             json_output = {"text": content["text"]}
 
             st.markdown("### 📋 Summary")
@@ -147,6 +161,13 @@ if uploaded_file is not None:
                 "total_slides": len(slides),
                 "total_words": sum(len(s["text"].split()) for s in slides)
             }
+
+            summary_text = f"""📊 PowerPoint Summary
+-------------------------
+Slides : {summary["total_slides"]}
+Words  : {summary["total_words"]}
+"""
+
             json_output = {"slides": slides}
 
             st.markdown("### 📋 Summary")
@@ -165,6 +186,13 @@ if uploaded_file is not None:
                 "sheet_count": len(sheets),
                 "sheets": list(sheets.keys())
             }
+
+            summary_text = f"""📈 Excel Summary
+-------------------------
+Sheets: {summary["sheet_count"]}
+Names : {", ".join(summary["sheets"])}
+"""
+
             json_output = {"sheets": {k: v.to_dict() for k, v in sheets.items()}}
 
             st.markdown("### 📋 Summary")
@@ -177,7 +205,11 @@ if uploaded_file is not None:
             st.subheader(f"📄 Sheet: {sheet}")
             st.dataframe(sheets[sheet], use_container_width=True)
 
-        # --- Download JSON ---
-        st.markdown("### 📦 Download Extracted JSON")
+        # --- Download Section ---
+        st.markdown("### 📦 Download Extracted Outputs")
+
         json_str = json.dumps(json_output, indent=2)
         st.markdown(generate_download_button(json_str, "extracted_data.json", "📥 Download JSON"), unsafe_allow_html=True)
+
+        if summary_text:
+            st.markdown(generate_download_button(summary_text, "summary.txt", "📄 Download Summary"), unsafe_allow_html=True)
