@@ -9,7 +9,28 @@ import zipfile
 import tempfile
 import warnings
 import re
+import time
+import gc
+import logging
+from functools import partial
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import multiprocessing
+from typing import Dict, List, Optional, Tuple, Any
+import pickle
+import sqlite3
+import hashlib
 warnings.filterwarnings('ignore')
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('extraction.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # Try importing optional libraries with fallbacks
 try:
@@ -17,21 +38,21 @@ try:
     HAS_PDFPLUMBER = True
 except ImportError:
     HAS_PDFPLUMBER = False
-    print("Warning: pdfplumber not available. Some table extraction features may be limited.")
+    logger.warning("pdfplumber not available. Some table extraction features may be limited.")
 
 try:
     import tabula
     HAS_TABULA = True
 except ImportError:
     HAS_TABULA = False
-    print("Warning: tabula-py not available. Some table extraction features may be limited.")
+    logger.warning("tabula-py not available. Some table extraction features may be limited.")
 
 try:
     import camelot
     HAS_CAMELOT = True
 except ImportError:
     HAS_CAMELOT = False
-    print("Warning: camelot-py not available. Some table extraction features may be limited.")
+    logger.warning("camelot-py not available. Some table extraction features may be limited.")
 
 try:
     import cv2
@@ -39,44 +60,173 @@ try:
     HAS_CV2 = True
 except ImportError:
     HAS_CV2 = False
-    print("Warning: OpenCV not available. Some image processing features may be limited.")
+    logger.warning("OpenCV not available. Some image processing features may be limited.")
 
 try:
     from docx import Document
     HAS_DOCX = True
 except ImportError:
     HAS_DOCX = False
-    print("Warning: python-docx not available. DOCX processing will be skipped.")
+    logger.warning("python-docx not available. DOCX processing will be skipped.")
 
 try:
     from pptx import Presentation
     HAS_PPTX = True
 except ImportError:
     HAS_PPTX = False
-    print("Warning: python-pptx not available. PPTX processing will be skipped.")
+    logger.warning("python-pptx not available. PPTX processing will be skipped.")
 
 try:
     import openpyxl
     HAS_OPENPYXL = True
 except ImportError:
     HAS_OPENPYXL = False
-    print("Warning: openpyxl not available. Excel processing may be limited.")
+    logger.warning("openpyxl not available. Excel processing may be limited.")
 
-class ComprehensiveDocumentExtractor:
-    def __init__(self):
+class OptimizedDocumentExtractor:
+    def __init__(self, max_workers=None, chunk_size=50, enable_caching=True, memory_limit_mb=1024):
         self.extracted_data = {}
         self.supported_formats = ['.pdf', '.docx', '.pptx', '.xlsx', '.xls']
+        self.max_workers = max_workers or min(4, multiprocessing.cpu_count())
+        self.chunk_size = chunk_size
+        self.enable_caching = enable_caching
+        self.memory_limit_mb = memory_limit_mb
         self.setup_directories()
+        self.setup_database()
+        
+        # Performance tracking
+        self.processing_stats = {
+            'pages_processed': 0,
+            'images_extracted': 0,
+            'tables_extracted': 0,
+            'memory_usage_mb': 0,
+            'processing_time': 0
+        }
     
     def setup_directories(self):
-        """Create necessary directories"""
-        os.makedirs('extracted_images', exist_ok=True)
-        os.makedirs('extracted_tables', exist_ok=True)
+        """Create necessary directories with better organization"""
+        base_dirs = ['extracted_images', 'extracted_tables', 'temp_processing', 'cache']
+        for directory in base_dirs:
+            os.makedirs(directory, exist_ok=True)
     
-    def extract_pdf_comprehensive(self, pdf_path):
-        """Extract comprehensive data from PDF with error handling"""
+    def setup_database(self):
+        """Setup SQLite database for caching and large data handling"""
+        if not self.enable_caching:
+            return
+            
         try:
-            print(f"📄 Processing PDF: {os.path.basename(pdf_path)}")
+            self.db_path = 'extraction_cache.db'
+            self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            self.conn.execute('''
+                CREATE TABLE IF NOT EXISTS file_cache (
+                    file_hash TEXT PRIMARY KEY,
+                    filename TEXT,
+                    file_size INTEGER,
+                    modification_time REAL,
+                    extraction_data BLOB,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            self.conn.execute('''
+                CREATE TABLE IF NOT EXISTS page_cache (
+                    page_hash TEXT PRIMARY KEY,
+                    file_hash TEXT,
+                    page_number INTEGER,
+                    page_data BLOB,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            self.conn.commit()
+            logger.info("Database cache initialized")
+        except Exception as e:
+            logger.error(f"Failed to setup database: {e}")
+            self.enable_caching = False
+    
+    def get_file_hash(self, file_path: str) -> str:
+        """Generate hash for file to enable caching"""
+        try:
+            stat = os.stat(file_path)
+            content = f"{file_path}_{stat.st_size}_{stat.st_mtime}"
+            return hashlib.md5(content.encode()).hexdigest()
+        except Exception as e:
+            logger.error(f"Error generating file hash: {e}")
+            return hashlib.md5(file_path.encode()).hexdigest()
+    
+    def check_cache(self, file_path: str) -> Optional[Dict]:
+        """Check if file data is cached"""
+        if not self.enable_caching:
+            return None
+            
+        try:
+            file_hash = self.get_file_hash(file_path)
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "SELECT extraction_data FROM file_cache WHERE file_hash = ?",
+                (file_hash,)
+            )
+            result = cursor.fetchone()
+            if result:
+                cached_data = pickle.loads(result[0])
+                logger.info(f"Using cached data for {os.path.basename(file_path)}")
+                return cached_data
+        except Exception as e:
+            logger.error(f"Error checking cache: {e}")
+        return None
+    
+    def save_to_cache(self, file_path: str, data: Dict):
+        """Save extraction data to cache"""
+        if not self.enable_caching:
+            return
+            
+        try:
+            file_hash = self.get_file_hash(file_path)
+            stat = os.stat(file_path)
+            
+            pickled_data = pickle.dumps(data)
+            
+            self.conn.execute('''
+                INSERT OR REPLACE INTO file_cache 
+                (file_hash, filename, file_size, modification_time, extraction_data)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (file_hash, os.path.basename(file_path), stat.st_size, stat.st_mtime, pickled_data))
+            self.conn.commit()
+            logger.info(f"Cached data for {os.path.basename(file_path)}")
+        except Exception as e:
+            logger.error(f"Error saving to cache: {e}")
+    
+    def monitor_memory_usage(self):
+        """Monitor and manage memory usage"""
+        try:
+            import psutil
+            process = psutil.Process(os.getpid())
+            memory_mb = process.memory_info().rss / 1024 / 1024
+            self.processing_stats['memory_usage_mb'] = memory_mb
+            
+            if memory_mb > self.memory_limit_mb:
+                logger.warning(f"Memory usage ({memory_mb:.1f}MB) exceeds limit ({self.memory_limit_mb}MB)")
+                gc.collect()  # Force garbage collection
+                
+                # Further memory cleanup if needed
+                if memory_mb > self.memory_limit_mb * 1.5:
+                    logger.warning("Forcing aggressive memory cleanup")
+                    return True  # Signal to reduce processing intensity
+                    
+        except ImportError:
+            logger.warning("psutil not available for memory monitoring")
+        except Exception as e:
+            logger.error(f"Error monitoring memory: {e}")
+        
+        return False
+    
+    def extract_pdf_chunked(self, pdf_path: str) -> Optional[Dict]:
+        """Extract PDF data in chunks to handle large files"""
+        # Check cache first
+        cached_data = self.check_cache(pdf_path)
+        if cached_data:
+            return cached_data
+        
+        try:
+            logger.info(f"Processing PDF: {os.path.basename(pdf_path)}")
             doc = fitz.open(pdf_path)
             
             pdf_data = {
@@ -101,25 +251,61 @@ class ComprehensiveDocumentExtractor:
             except:
                 pdf_data['metadata'] = {}
             
-            # Process each page with progress indicator
-            for page_num in range(len(doc)):
-                if page_num % 10 == 0:
-                    print(f"  📃 Processing page {page_num + 1}/{len(doc)}")
+            # Process pages in chunks
+            total_pages = len(doc)
+            processed_pages = 0
+            
+            for chunk_start in range(0, total_pages, self.chunk_size):
+                chunk_end = min(chunk_start + self.chunk_size, total_pages)
+                logger.info(f"Processing pages {chunk_start + 1}-{chunk_end} of {total_pages}")
                 
-                try:
-                    page = doc[page_num]
-                    page_data = self.extract_page_data(page, page_num + 1, pdf_path)
-                    pdf_data['pages'].append(page_data)
+                # Check memory before processing chunk
+                if self.monitor_memory_usage():
+                    # Reduce chunk size if memory is high
+                    self.chunk_size = max(10, self.chunk_size // 2)
+                    logger.info(f"Reduced chunk size to {self.chunk_size} due to memory constraints")
+                
+                # Process chunk with threading
+                chunk_pages = []
+                page_futures = []
+                
+                with ThreadPoolExecutor(max_workers=min(self.max_workers, chunk_end - chunk_start)) as executor:
+                    for page_num in range(chunk_start, chunk_end):
+                        try:
+                            page = doc[page_num]
+                            future = executor.submit(self.extract_page_data_optimized, page, page_num + 1, pdf_path)
+                            page_futures.append((page_num, future))
+                        except Exception as e:
+                            logger.error(f"Error submitting page {page_num + 1}: {e}")
+                            continue
                     
-                    # Accumulate totals
-                    pdf_data['total_images'] += len(page_data['images'])
-                    pdf_data['total_tables'] += len(page_data['tables'])
-                    pdf_data['total_words'] += page_data['word_count']
-                    pdf_data['total_characters'] += page_data['char_count']
-                    
-                except Exception as e:
-                    print(f"  ⚠️  Error on page {page_num + 1}: {str(e)}")
-                    continue
+                    # Collect results
+                    for page_num, future in page_futures:
+                        try:
+                            page_data = future.result(timeout=30)  # 30 second timeout per page
+                            if page_data:
+                                chunk_pages.append(page_data)
+                                
+                                # Update totals
+                                pdf_data['total_images'] += len(page_data.get('images', []))
+                                pdf_data['total_tables'] += len(page_data.get('tables', []))
+                                pdf_data['total_words'] += page_data.get('word_count', 0)
+                                pdf_data['total_characters'] += page_data.get('char_count', 0)
+                                
+                                processed_pages += 1
+                                self.processing_stats['pages_processed'] += 1
+                                
+                        except Exception as e:
+                            logger.error(f"Error processing page {page_num + 1}: {e}")
+                            continue
+                
+                # Add chunk pages to main data
+                pdf_data['pages'].extend(chunk_pages)
+                
+                # Periodic cleanup
+                if processed_pages % 100 == 0:
+                    gc.collect()
+                    logger.info(f"Processed {processed_pages}/{total_pages} pages")
             
             # Extract unique fonts
             all_fonts = []
@@ -127,24 +313,27 @@ class ComprehensiveDocumentExtractor:
                 all_fonts.extend(page.get('fonts', []))
             pdf_data['fonts_used'] = list(set(all_fonts))
             
-            # Extract tables using multiple methods
-            print("  📊 Extracting tables...")
-            pdf_data['extracted_tables'] = self.extract_tables_multiple_methods(pdf_path)
+            # Extract tables using optimized methods
+            logger.info("Extracting tables with optimized methods...")
+            pdf_data['extracted_tables'] = self.extract_tables_optimized(pdf_path, doc)
             
             doc.close()
-            print(f"  ✅ PDF processed: {pdf_data['page_count']} pages, {pdf_data['total_words']} words")
+            
+            # Save to cache
+            self.save_to_cache(pdf_path, pdf_data)
+            
+            logger.info(f"PDF processed successfully: {pdf_data['page_count']} pages, {pdf_data['total_words']} words")
             return pdf_data
             
         except Exception as e:
-            print(f"❌ Error processing PDF {pdf_path}: {str(e)}")
+            logger.error(f"Error processing PDF {pdf_path}: {e}")
             return None
     
-    def extract_page_data(self, page, page_num, pdf_path):
-        """Extract comprehensive data from a single page"""
+    def extract_page_data_optimized(self, page, page_num: int, pdf_path: str) -> Dict:
+        """Optimized page data extraction with memory management"""
         page_data = {
             'page_number': page_num,
             'text': '',
-            'formatted_text': [],
             'images': [],
             'tables': [],
             'fonts': [],
@@ -158,48 +347,39 @@ class ComprehensiveDocumentExtractor:
         }
         
         try:
-            # Extract text with formatting
+            # Extract text more efficiently
             text_dict = page.get_text("dict")
             page_text = ""
-            fonts_on_page = []
+            fonts_on_page = set()
             
             for block in text_dict.get("blocks", []):
                 if "lines" in block:
                     for line in block["lines"]:
+                        line_text = ""
                         for span in line["spans"]:
                             text = span.get("text", "")
-                            page_text += text
-                            
-                            # Store formatted text with details
-                            page_data['formatted_text'].append({
-                                'text': text,
-                                'font': span.get('font', 'Unknown'),
-                                'size': round(span.get('size', 0), 2),
-                                'flags': span.get('flags', 0),
-                                'color': span.get('color', 0),
-                                'bbox': span.get('bbox', [0, 0, 0, 0])
-                            })
-                            
-                            fonts_on_page.append(span.get('font', 'Unknown'))
+                            line_text += text
+                            fonts_on_page.add(span.get('font', 'Unknown'))
+                        page_text += line_text + " "
             
-            page_data['text'] = page_text
-            page_data['fonts'] = list(set(fonts_on_page))
-            page_data['word_count'] = len(page_text.split())
+            page_data['text'] = page_text.strip()
+            page_data['fonts'] = list(fonts_on_page)
+            page_data['word_count'] = len(page_text.split()) if page_text else 0
             page_data['char_count'] = len(page_text)
             
-            # Extract images
-            page_data['images'] = self.extract_images_from_page(page, page_num, pdf_path)
+            # Extract images with size limits
+            page_data['images'] = self.extract_images_optimized(page, page_num, pdf_path)
             
-            # Extract tables (improved detection)
-            page_data['tables'] = self.extract_tables_from_page(page)
+            # Extract tables with improved detection
+            page_data['tables'] = self.extract_tables_from_page_optimized(page)
             
         except Exception as e:
-            print(f"    ⚠️  Error extracting from page {page_num}: {str(e)}")
+            logger.error(f"Error extracting from page {page_num}: {e}")
         
         return page_data
     
-    def extract_images_from_page(self, page, page_num, pdf_path):
-        """Extract images from a page with better error handling"""
+    def extract_images_optimized(self, page, page_num: int, pdf_path: str) -> List[Dict]:
+        """Optimized image extraction with size and quality controls"""
         images = []
         
         try:
@@ -211,15 +391,32 @@ class ComprehensiveDocumentExtractor:
                     base_image = page.parent.extract_image(xref)
                     image_bytes = base_image["image"]
                     
+                    # Skip very small images (likely decorative)
+                    if base_image["width"] < 50 or base_image["height"] < 50:
+                        continue
+                    
+                    # Skip very large images if memory is constrained
+                    if len(image_bytes) > 10 * 1024 * 1024:  # 10MB limit
+                        logger.warning(f"Skipping large image ({len(image_bytes)/1024/1024:.1f}MB) on page {page_num}")
+                        continue
+                    
                     # Create safe filename
                     base_name = os.path.splitext(os.path.basename(pdf_path))[0]
                     img_name = f"extracted_images/{base_name}_page_{page_num}_img_{img_index + 1}.png"
                     
-                    # Save image
-                    with open(img_name, "wb") as img_file:
-                        img_file.write(image_bytes)
+                    # Save image with compression
+                    try:
+                        with Image.open(io.BytesIO(image_bytes)) as pil_img:
+                            # Resize if too large
+                            if pil_img.width > 2000 or pil_img.height > 2000:
+                                pil_img.thumbnail((2000, 2000), Image.Resampling.LANCZOS)
+                            
+                            pil_img.save(img_name, 'PNG', optimize=True, compress_level=6)
+                    except Exception:
+                        # Fallback to raw save
+                        with open(img_name, "wb") as img_file:
+                            img_file.write(image_bytes)
                     
-                    # Get image info
                     img_info = {
                         'filename': img_name,
                         'width': base_image["width"],
@@ -229,204 +426,125 @@ class ComprehensiveDocumentExtractor:
                     }
                     
                     images.append(img_info)
+                    self.processing_stats['images_extracted'] += 1
                     
                 except Exception as e:
-                    print(f"      ⚠️  Error extracting image {img_index} from page {page_num}: {str(e)}")
+                    logger.error(f"Error extracting image {img_index} from page {page_num}: {e}")
                     continue
                     
         except Exception as e:
-            print(f"    ⚠️  Error accessing images on page {page_num}: {str(e)}")
+            logger.error(f"Error accessing images on page {page_num}: {e}")
         
         return images
     
-    def is_likely_table(self, text_lines):
-        """Improved heuristic to determine if text lines represent a table"""
-        if len(text_lines) < 2:
-            return False
-        
-        # Check for common table indicators
-        table_indicators = 0
-        
-        # Look for consistent separators across lines
-        separator_patterns = [r'\t', r'\s{2,}', r'\|', r',', r';']
-        consistent_separators = 0
-        
-        for pattern in separator_patterns:
-            separator_counts = [len(re.findall(pattern, line)) for line in text_lines]
-            if len(set(separator_counts)) == 1 and separator_counts[0] > 0:
-                consistent_separators += 1
-        
-        if consistent_separators > 0:
-            table_indicators += 2
-        
-        # Check for numeric content (common in tables)
-        numeric_lines = 0
-        for line in text_lines:
-            if re.search(r'\d+', line):
-                numeric_lines += 1
-        
-        if numeric_lines / len(text_lines) > 0.5:
-            table_indicators += 1
-        
-        # Check for consistent column-like alignment
-        if len(text_lines) > 2:
-            # Check if lines have similar lengths (indicating potential columns)
-            line_lengths = [len(line.strip()) for line in text_lines if line.strip()]
-            if line_lengths:
-                avg_length = sum(line_lengths) / len(line_lengths)
-                similar_lengths = sum(1 for length in line_lengths if abs(length - avg_length) < avg_length * 0.3)
-                if similar_lengths / len(line_lengths) > 0.7:
-                    table_indicators += 1
-        
-        # Check for header-like patterns (first line different from others)
-        if len(text_lines) > 1:
-            first_line = text_lines[0].strip()
-            other_lines = [line.strip() for line in text_lines[1:] if line.strip()]
-            
-            # Check if first line might be headers (contains letters, others more numeric)
-            if first_line and other_lines:
-                first_has_letters = bool(re.search(r'[a-zA-Z]', first_line))
-                others_mostly_numeric = sum(1 for line in other_lines if re.search(r'\d', line)) / len(other_lines) > 0.6
-                
-                if first_has_letters and others_mostly_numeric:
-                    table_indicators += 1
-        
-        # Exclude common false positives
-        false_positive_indicators = 0
-        
-        # Check for paragraph-like text
-        for line in text_lines:
-            if len(line.strip()) > 100:  # Very long lines are likely paragraphs
-                false_positive_indicators += 1
-        
-        # Check for sentence-like structures
-        sentence_patterns = [r'\.', r'\?', r'!']
-        for line in text_lines:
-            for pattern in sentence_patterns:
-                if re.search(pattern, line):
-                    false_positive_indicators += 1
-                    break
-        
-        # Decision logic
-        if false_positive_indicators > len(text_lines) * 0.3:
-            return False
-        
-        return table_indicators >= 2
-    
-    def extract_tables_from_page(self, page):
-        """Improved table detection from page using better heuristics"""
+    def extract_tables_from_page_optimized(self, page) -> List[Dict]:
+        """Optimized table detection with better performance"""
         tables = []
         try:
+            # Use simplified table detection for large documents
             text_dict = page.get_text("dict")
             
+            potential_tables = []
+            
             for block in text_dict.get("blocks", []):
-                if "lines" in block:
+                if "lines" in block and len(block["lines"]) >= 3:
                     lines = block["lines"]
-                    if len(lines) >= 3:  # Minimum lines for a table
-                        # Extract text lines
-                        text_lines = []
-                        for line in lines:
-                            row_text = ""
-                            for span in line["spans"]:
-                                row_text += span.get("text", "") + " "
-                            text_lines.append(row_text.strip())
-                        
-                        # Filter out empty lines
-                        text_lines = [line for line in text_lines if line.strip()]
-                        
-                        # Check if this looks like a table
-                        if len(text_lines) >= 2 and self.is_likely_table(text_lines):
-                            tables.append({
+                    
+                    # Quick check for table-like structure
+                    line_texts = []
+                    for line in lines:
+                        row_text = ""
+                        for span in line["spans"]:
+                            row_text += span.get("text", "") + " "
+                        line_texts.append(row_text.strip())
+                    
+                    # Filter out empty lines
+                    line_texts = [line for line in line_texts if line.strip()]
+                    
+                    if len(line_texts) >= 2:
+                        # Quick heuristic check
+                        if self.quick_table_check(line_texts):
+                            potential_tables.append({
                                 'bbox': block.get('bbox', [0, 0, 0, 0]),
-                                'data': text_lines,
-                                'method': 'improved_detection',
+                                'data': line_texts,
+                                'method': 'optimized_detection',
                                 'confidence': 'medium'
                             })
             
+            # Limit number of tables per page to prevent memory issues
+            tables = potential_tables[:10]  # Max 10 tables per page
+            self.processing_stats['tables_extracted'] += len(tables)
+            
         except Exception as e:
-            print(f"      ⚠️  Error extracting tables from page: {str(e)}")
+            logger.error(f"Error extracting tables from page: {e}")
         
         return tables
     
-    def extract_tables_multiple_methods(self, pdf_path):
-        """Extract tables using multiple libraries for better accuracy"""
+    def quick_table_check(self, text_lines: List[str]) -> bool:
+        """Quick heuristic to identify potential tables"""
+        if len(text_lines) < 2:
+            return False
+        
+        # Check for consistent separators
+        separators = ['\t', '  ', '|', ',']
+        for sep in separators:
+            counts = [line.count(sep) for line in text_lines]
+            if len(set(counts)) <= 2 and max(counts) > 0:  # Consistent separator usage
+                return True
+        
+        # Check for numeric content
+        numeric_lines = sum(1 for line in text_lines if re.search(r'\d+', line))
+        if numeric_lines / len(text_lines) > 0.4:
+            return True
+        
+        return False
+    
+    def extract_tables_optimized(self, pdf_path: str, doc=None) -> List[Dict]:
+        """Optimized table extraction for large files"""
         all_tables = []
         
-        # Method 1: Using tabula-py
-        if HAS_TABULA:
+        # For very large files, limit table extraction methods
+        file_size_mb = os.path.getsize(pdf_path) / (1024 * 1024)
+        
+        if file_size_mb > 100:  # Files larger than 100MB
+            logger.info("Large file detected, using lightweight table extraction")
+            return all_tables  # Skip heavy table extraction for very large files
+        
+        # Method 1: Using tabula-py (most reliable but slower)
+        if HAS_TABULA and file_size_mb < 50:  # Only for files < 50MB
             try:
-                print("    📊 Trying tabula...")
-                tabula_tables = tabula.read_pdf(pdf_path, pages='all', multiple_tables=True, silent=True)
-                valid_tables = 0
+                logger.info("Extracting tables with tabula...")
+                tabula_tables = tabula.read_pdf(
+                    pdf_path, 
+                    pages='all', 
+                    multiple_tables=True, 
+                    silent=True,
+                    pandas_options={'dtype': str}  # Prevent type conversion issues
+                )
+                
                 for i, table in enumerate(tabula_tables):
                     if not table.empty and table.shape[0] > 1 and table.shape[1] > 1:
-                        # Additional validation: check if it's actually tabular data
                         if self.validate_extracted_table(table):
                             all_tables.append({
                                 'method': 'tabula',
                                 'table_index': i,
-                                'data': table.to_dict('records'),
+                                'data': table.head(100).to_dict('records'),  # Limit rows
                                 'shape': table.shape,
-                                'columns': table.columns.tolist(),
                                 'confidence': 'high'
                             })
-                            valid_tables += 1
-                print(f"      ✅ Tabula found {valid_tables} valid tables")
+                            
+                            # Limit total tables to prevent memory issues
+                            if len(all_tables) >= 20:
+                                break
+                
+                logger.info(f"Tabula found {len(all_tables)} tables")
+                
             except Exception as e:
-                print(f"      ⚠️  Tabula extraction failed: {str(e)}")
-        
-        # Method 2: Using camelot (for lattice tables)
-        if HAS_CAMELOT:
-            try:
-                print("    📊 Trying camelot...")
-                camelot_tables = camelot.read_pdf(pdf_path, pages='all', flavor='lattice')
-                valid_tables = 0
-                for i, table in enumerate(camelot_tables):
-                    if not table.df.empty and table.df.shape[0] > 1 and table.df.shape[1] > 1:
-                        # Check accuracy threshold
-                        accuracy = getattr(table, 'accuracy', 0)
-                        if accuracy > 50:  # Only include tables with >50% accuracy
-                            all_tables.append({
-                                'method': 'camelot_lattice',
-                                'table_index': i,
-                                'data': table.df.to_dict('records'),
-                                'shape': table.df.shape,
-                                'accuracy': accuracy,
-                                'confidence': 'high' if accuracy > 80 else 'medium'
-                            })
-                            valid_tables += 1
-                print(f"      ✅ Camelot found {valid_tables} valid tables")
-            except Exception as e:
-                print(f"      ⚠️  Camelot extraction failed: {str(e)}")
-        
-        # Method 3: Using pdfplumber
-        if HAS_PDFPLUMBER:
-            try:
-                print("    📊 Trying pdfplumber...")
-                table_count = 0
-                with pdfplumber.open(pdf_path) as pdf:
-                    for page_num, page in enumerate(pdf.pages):
-                        tables = page.extract_tables()
-                        for i, table in enumerate(tables):
-                            if table and len(table) > 1 and len(table[0]) > 1:
-                                # Validate table content
-                                if self.validate_pdfplumber_table(table):
-                                    all_tables.append({
-                                        'method': 'pdfplumber',
-                                        'page': page_num + 1,
-                                        'table_index': i,
-                                        'data': table,
-                                        'shape': (len(table), len(table[0]) if table else 0),
-                                        'confidence': 'medium'
-                                    })
-                                    table_count += 1
-                print(f"      ✅ PDFplumber found {table_count} valid tables")
-            except Exception as e:
-                print(f"      ⚠️  PDFplumber extraction failed: {str(e)}")
+                logger.error(f"Tabula extraction failed: {e}")
         
         return all_tables
     
-    def validate_extracted_table(self, df):
+    def validate_extracted_table(self, df) -> bool:
         """Validate if a pandas DataFrame represents a real table"""
         if df.empty or df.shape[0] < 2 or df.shape[1] < 2:
             return False
@@ -435,51 +553,24 @@ class ComprehensiveDocumentExtractor:
         text_content = df.astype(str).values.flatten()
         non_empty_cells = [cell for cell in text_content if cell.strip() and cell.strip() != 'nan']
         
-        if len(non_empty_cells) < df.shape[0] * df.shape[1] * 0.3:  # At least 30% cells should have content
-            return False
-        
-        # Check for variety in content (not all cells the same)
-        unique_values = set(non_empty_cells)
-        if len(unique_values) < 2:
+        if len(non_empty_cells) < df.shape[0] * df.shape[1] * 0.2:  # At least 20% cells should have content
             return False
         
         return True
     
-    def validate_pdfplumber_table(self, table):
-        """Validate if a pdfplumber table represents real tabular data"""
-        if not table or len(table) < 2:
-            return False
-        
-        # Count non-empty cells
-        non_empty_cells = 0
-        total_cells = 0
-        unique_values = set()
-        
-        for row in table:
-            for cell in row:
-                total_cells += 1
-                if cell and cell.strip():
-                    non_empty_cells += 1
-                    unique_values.add(cell.strip())
-        
-        # Must have at least 30% non-empty cells
-        if non_empty_cells < total_cells * 0.3:
-            return False
-        
-        # Must have at least 2 unique values
-        if len(unique_values) < 2:
-            return False
-        
-        return True
-    
-    def extract_docx(self, docx_path):
-        """Extract data from DOCX files"""
+    def extract_docx_optimized(self, docx_path: str) -> Optional[Dict]:
+        """Optimized DOCX extraction"""
         if not HAS_DOCX:
-            print("❌ python-docx not available. Skipping DOCX processing.")
+            logger.error("python-docx not available. Skipping DOCX processing.")
             return None
+        
+        # Check cache first
+        cached_data = self.check_cache(docx_path)
+        if cached_data:
+            return cached_data
             
         try:
-            print(f"📄 Processing DOCX: {os.path.basename(docx_path)}")
+            logger.info(f"Processing DOCX: {os.path.basename(docx_path)}")
             doc = Document(docx_path)
             
             docx_data = {
@@ -492,21 +583,31 @@ class ComprehensiveDocumentExtractor:
                 'file_size_mb': round(os.path.getsize(docx_path) / (1024*1024), 2)
             }
             
-            # Extract paragraphs
-            for para in doc.paragraphs:
+            # Extract paragraphs with limits
+            for i, para in enumerate(doc.paragraphs):
+                if i >= 10000:  # Limit paragraphs for very large documents
+                    logger.warning("Paragraph limit reached, truncating extraction")
+                    break
+                    
                 if para.text.strip():
                     docx_data['paragraphs'].append({
-                        'text': para.text,
+                        'text': para.text[:1000],  # Limit text length
                         'style': para.style.name if para.style else 'Normal'
                     })
                     docx_data['total_words'] += len(para.text.split())
                     docx_data['total_characters'] += len(para.text)
             
-            # Extract tables
+            # Extract tables with limits
             for table_idx, table in enumerate(doc.tables):
+                if table_idx >= 50:  # Limit tables
+                    logger.warning("Table limit reached, truncating extraction")
+                    break
+                    
                 table_data = []
-                for row in table.rows:
-                    row_data = [cell.text.strip() for cell in row.cells]
+                for row_idx, row in enumerate(table.rows):
+                    if row_idx >= 100:  # Limit rows per table
+                        break
+                    row_data = [cell.text.strip()[:200] for cell in row.cells]  # Limit cell text
                     table_data.append(row_data)
                 
                 if table_data and len(table_data) > 1:
@@ -516,21 +617,75 @@ class ComprehensiveDocumentExtractor:
                         'shape': (len(table_data), len(table_data[0]) if table_data else 0)
                     })
             
-            print(f"  ✅ DOCX processed: {len(docx_data['paragraphs'])} paragraphs, {docx_data['total_words']} words")
+            # Save to cache
+            self.save_to_cache(docx_path, docx_data)
+            
+            logger.info(f"DOCX processed: {len(docx_data['paragraphs'])} paragraphs, {docx_data['total_words']} words")
             return docx_data
             
         except Exception as e:
-            print(f"❌ Error processing DOCX {docx_path}: {str(e)}")
+            logger.error(f"Error processing DOCX {docx_path}: {e}")
             return None
     
-    def extract_pptx(self, pptx_path):
-        """Extract data from PPTX files"""
+    def process_files_optimized(self, file_paths: List[str]) -> Dict:
+        """Optimized file processing with better resource management"""
+        results = {}
+        
+        logger.info(f"Processing {len(file_paths)} file(s) with optimized methods...")
+        
+        for i, file_path in enumerate(file_paths, 1):
+            file_ext = os.path.splitext(file_path)[1].lower()
+            
+            logger.info(f"[{i}/{len(file_paths)}] Processing: {file_path}")
+            
+            # Check file size and warn for very large files
+            file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
+            if file_size_mb > 500:
+                logger.warning(f"Very large file detected ({file_size_mb:.1f}MB). Processing may take significant time.")
+            
+            start_time = time.time()
+            
+            try:
+                if file_ext == '.pdf':
+                    result = self.extract_pdf_chunked(file_path)
+                elif file_ext == '.docx':
+                    result = self.extract_docx_optimized(file_path)
+                elif file_ext == '.pptx':
+                    result = self.extract_pptx_optimized(file_path)
+                elif file_ext in ['.xlsx', '.xls']:
+                    result = self.extract_excel_optimized(file_path)
+                else:
+                    logger.warning(f"Unsupported file format: {file_ext}")
+                    continue
+                
+                processing_time = time.time() - start_time
+                
+                if result:
+                    result['processing_time_seconds'] = round(processing_time, 2)
+                    results[file_path] = result
+                    logger.info(f"Successfully processed: {file_path} ({processing_time:.2f}s)")
+                else:
+                    logger.error(f"Failed to process: {file_path}")
+                    
+            except Exception as e:
+                logger.error(f"Error processing {file_path}: {e}")
+                continue
+        
+        return results
+    
+    def extract_pptx_optimized(self, pptx_path: str) -> Optional[Dict]:
+        """Optimized PPTX extraction"""
         if not HAS_PPTX:
-            print("❌ python-pptx not available. Skipping PPTX processing.")
+            logger.error("python-pptx not available. Skipping PPTX processing.")
             return None
+        
+        # Check cache first
+        cached_data = self.check_cache(pptx_path)
+        if cached_data:
+            return cached_data
             
         try:
-            print(f"📄 Processing PPTX: {os.path.basename(pptx_path)}")
+            logger.info(f"Processing PPTX: {os.path.basename(pptx_path)}")
             prs = Presentation(pptx_path)
             
             pptx_data = {
@@ -543,7 +698,12 @@ class ComprehensiveDocumentExtractor:
                 'file_size_mb': round(os.path.getsize(pptx_path) / (1024*1024), 2)
             }
             
-            for slide_idx, slide in enumerate(prs.slides):
+            # Limit slides for very large presentations
+            max_slides = min(500, len(prs.slides))
+            if max_slides < len(prs.slides):
+                logger.warning(f"Limiting extraction to first {max_slides} slides")
+            
+            for slide_idx, slide in enumerate(prs.slides[:max_slides]):
                 slide_data = {
                     'slide_number': slide_idx + 1,
                     'text_content': [],
@@ -554,15 +714,18 @@ class ComprehensiveDocumentExtractor:
                 for shape in slide.shapes:
                     try:
                         if hasattr(shape, "text") and shape.text.strip():
-                            slide_data['text_content'].append(shape.text.strip())
-                            pptx_data['total_words'] += len(shape.text.split())
-                            pptx_data['total_characters'] += len(shape.text)
+                            text = shape.text.strip()[:1000]  # Limit text length
+                            slide_data['text_content'].append(text)
+                            pptx_data['total_words'] += len(text.split())
+                            pptx_data['total_characters'] += len(text)
                         
                         # Extract tables
                         if hasattr(shape, "table") and shape.table:
                             table_data = []
-                            for row in shape.table.rows:
-                                row_data = [cell.text.strip() for cell in row.cells]
+                            for row_idx, row in enumerate(shape.table.rows):
+                                if row_idx >= 50:  # Limit rows
+                                    break
+                                row_data = [cell.text.strip()[:200] for cell in row.cells]
                                 table_data.append(row_data)
                             if table_data and len(table_data) > 1:
                                 slide_data['tables'].append(table_data)
@@ -571,445 +734,405 @@ class ComprehensiveDocumentExtractor:
                 
                 pptx_data['slides'].append(slide_data)
             
-            print(f"  ✅ PPTX processed: {pptx_data['total_slides']} slides, {pptx_data['total_words']} words")
+            # Save to cache
+            self.save_to_cache(pptx_path, pptx_data)
+            
+            logger.info(f"PPTX processed: {pptx_data['total_slides']} slides, {pptx_data['total_words']} words")
             return pptx_data
             
         except Exception as e:
-            print(f"❌ Error processing PPTX {pptx_path}: {str(e)}")
+            logger.error(f"Error processing PPTX {pptx_path}: {e}")
             return None
     
-    def extract_excel(self, excel_path):
-        """Extract data from Excel files"""
+    def extract_excel_optimized(self, excel_path: str) -> Optional[Dict]:
+        """Optimized Excel extraction"""
+        # Check cache first
+        cached_data = self.check_cache(excel_path)
+        if cached_data:
+            return cached_data
+            
         try:
-            print(f"📄 Processing Excel: {os.path.basename(excel_path)}")
+            logger.info(f"Processing Excel: {os.path.basename(excel_path)}")
             
             excel_data = {
                 'filename': os.path.basename(excel_path),
                 'file_type': 'Excel',
                 'sheets': [],
+                'total_sheets': 0,
+                'total_rows': 0,
+                'total_columns': 0,
                 'file_size_mb': round(os.path.getsize(excel_path) / (1024*1024), 2)
             }
             
-            # Read all sheets
-            xl_file = pd.ExcelFile(excel_path)
+            # Try different Excel reading methods
+            try:
+                # Method 1: Using pandas (most reliable for data)
+                xl_file = pd.ExcelFile(excel_path)
+                sheet_names = xl_file.sheet_names
+                excel_data['total_sheets'] = len(sheet_names)
+                
+                # Limit sheets for very large files
+                max_sheets = min(20, len(sheet_names))
+                if max_sheets < len(sheet_names):
+                    logger.warning(f"Limiting extraction to first {max_sheets} sheets")
+                
+                for sheet_name in sheet_names[:max_sheets]:
+                    try:
+                        df = pd.read_excel(excel_path, sheet_name=sheet_name, nrows=1000)  # Limit rows
+                        
+                        if not df.empty:
+                            sheet_data = {
+                                'sheet_name': sheet_name,
+                                'shape': df.shape,
+                                'columns': df.columns.tolist()[:50],  # Limit columns
+                                'data': df.head(100).to_dict('records'),  # Limit data
+                                'has_data': True
+                            }
+                            excel_data['sheets'].append(sheet_data)
+                            excel_data['total_rows'] += df.shape[0]
+                            excel_data['total_columns'] += df.shape[1]
+                        else:
+                            excel_data['sheets'].append({
+                                'sheet_name': sheet_name,
+                                'shape': (0, 0),
+                                'columns': [],
+                                'data': [],
+                                'has_data': False
+                            })
+                    except Exception as e:
+                        logger.error(f"Error reading sheet {sheet_name}: {e}")
+                        continue
+                        
+            except Exception as e:
+                logger.error(f"Error with pandas Excel reading: {e}")
+                
+                # Fallback method using openpyxl
+                if HAS_OPENPYXL:
+                    try:
+                        from openpyxl import load_workbook
+                        wb = load_workbook(excel_path, read_only=True)
+                        
+                        excel_data['total_sheets'] = len(wb.sheetnames)
+                        
+                        for sheet_name in wb.sheetnames[:20]:  # Limit sheets
+                            ws = wb[sheet_name]
+                            
+                            # Get sheet dimensions
+                            max_row = min(ws.max_row, 1000)  # Limit rows
+                            max_col = min(ws.max_column, 50)  # Limit columns
+                            
+                            sheet_data = {
+                                'sheet_name': sheet_name,
+                                'shape': (max_row, max_col),
+                                'columns': [f'Column_{i}' for i in range(1, max_col + 1)],
+                                'data': [],
+                                'has_data': max_row > 0 and max_col > 0
+                            }
+                            
+                            # Extract limited data
+                            for row in ws.iter_rows(min_row=1, max_row=min(100, max_row), 
+                                                   min_col=1, max_col=max_col, values_only=True):
+                                row_data = [str(cell) if cell is not None else '' for cell in row]
+                                sheet_data['data'].append(row_data)
+                            
+                            excel_data['sheets'].append(sheet_data)
+                            excel_data['total_rows'] += max_row
+                            excel_data['total_columns'] += max_col
+                            
+                        wb.close()
+                        
+                    except Exception as e:
+                        logger.error(f"Error with openpyxl Excel reading: {e}")
+                        return None
+                else:
+                    logger.error("Neither pandas nor openpyxl available for Excel processing")
+                    return None
             
-            for sheet_name in xl_file.sheet_names:
-                try:
-                    df = pd.read_excel(excel_path, sheet_name=sheet_name)
-                    
-                    sheet_data = {
-                        'sheet_name': sheet_name,
-                        'shape': df.shape,
-                        'columns': df.columns.tolist(),
-                        'data': df.head(100).to_dict('records') if not df.empty else [],  # Limit to first 100 rows
-                        'summary': df.describe(include='all').to_dict() if not df.empty else {},
-                        'data_types': df.dtypes.astype(str).to_dict()
-                    }
-                    
-                    excel_data['sheets'].append(sheet_data)
-                    
-                except Exception as e:
-                    print(f"    ⚠️  Error reading sheet '{sheet_name}': {str(e)}")
-                    continue
+            # Save to cache
+            self.save_to_cache(excel_path, excel_data)
             
-            print(f"  ✅ Excel processed: {len(excel_data['sheets'])} sheets")
+            logger.info(f"Excel processed: {excel_data['total_sheets']} sheets, {excel_data['total_rows']} total rows")
             return excel_data
             
         except Exception as e:
-            print(f"❌ Error processing Excel {excel_path}: {str(e)}")
+            logger.error(f"Error processing Excel {excel_path}: {e}")
             return None
     
-    def process_files(self, file_paths):
-        """Process all uploaded files"""
-        results = {}
-        
-        print(f"\n🔄 Processing {len(file_paths)} file(s)...")
-        print("=" * 60)
-        
-        for i, file_path in enumerate(file_paths, 1):
-            file_ext = os.path.splitext(file_path)[1].lower()
-            
-            print(f"\n[{i}/{len(file_paths)}] Processing: {file_path}")
-            
-            try:
-                if file_ext == '.pdf':
-                    result = self.extract_pdf_comprehensive(file_path)
-                elif file_ext == '.docx':
-                    result = self.extract_docx(file_path)
-                elif file_ext == '.pptx':
-                    result = self.extract_pptx(file_path)
-                elif file_ext in ['.xlsx', '.xls']:
-                    result = self.extract_excel(file_path)
-                else:
-                    print(f"❌ Unsupported file format: {file_ext}")
-                    continue
-                
-                if result:
-                    results[file_path] = result
-                    print(f"✅ Successfully processed: {file_path}")
-                else:
-                    print(f"❌ Failed to process: {file_path}")
-                    
-            except Exception as e:
-                print(f"❌ Error processing {file_path}: {str(e)}")
-                continue
-        
-        return results
-    
-    def save_results(self, results, output_format='json'):
-        """Save extraction results with better formatting"""
-        if not results:
-            print("❌ No results to save.")
-            return
-        
+    def save_extracted_data(self, output_path: str = "extracted_data.json"):
+        """Save all extracted data to JSON file"""
         try:
-            # Save as JSON
-            with open('extraction_results.json', 'w', encoding='utf-8') as f:
-                json.dump(results, f, indent=2, ensure_ascii=False, default=str)
-            print("✅ Results saved as: extraction_results.json")
+            # Convert results to JSON-serializable format
+            json_data = {}
             
-            # Create summary report
-            self.create_summary_report(results)
+            for file_path, data in self.extracted_data.items():
+                # Create a simplified version for JSON export
+                simplified_data = {
+                    'filename': data.get('filename', ''),
+                    'file_type': data.get('file_type', ''),
+                    'processing_time_seconds': data.get('processing_time_seconds', 0),
+                    'file_size_mb': data.get('file_size_mb', 0),
+                    'summary': self.generate_file_summary(data)
+                }
+                
+                # Add type-specific data
+                if data.get('file_type') == 'PDF':
+                    simplified_data.update({
+                        'page_count': data.get('page_count', 0),
+                        'total_words': data.get('total_words', 0),
+                        'total_images': data.get('total_images', 0),
+                        'total_tables': data.get('total_tables', 0),
+                        'fonts_used': data.get('fonts_used', [])[:10]  # Limit fonts
+                    })
+                elif data.get('file_type') == 'DOCX':
+                    simplified_data.update({
+                        'paragraph_count': len(data.get('paragraphs', [])),
+                        'table_count': len(data.get('tables', [])),
+                        'total_words': data.get('total_words', 0)
+                    })
+                elif data.get('file_type') == 'PPTX':
+                    simplified_data.update({
+                        'slide_count': data.get('total_slides', 0),
+                        'total_words': data.get('total_words', 0)
+                    })
+                elif data.get('file_type') == 'Excel':
+                    simplified_data.update({
+                        'sheet_count': data.get('total_sheets', 0),
+                        'total_rows': data.get('total_rows', 0),
+                        'total_columns': data.get('total_columns', 0)
+                    })
+                
+                json_data[file_path] = simplified_data
             
-            # Create CSV summaries for tables
-            self.save_tables_as_csv(results)
+            # Add processing statistics
+            json_data['processing_statistics'] = self.processing_stats
             
-            # Check if there are extracted images
-            if os.path.exists('extracted_images') and os.listdir('extracted_images'):
-                print("🖼️  Images extracted to 'extracted_images' folder")
-                
-        except Exception as e:
-            print(f"❌ Error saving results: {str(e)}")
-    
-    def save_tables_as_csv(self, results):
-        """Save extracted tables as CSV files"""
-        table_count = 0
-        
-        for file_path, data in results.items():
-            filename_base = os.path.splitext(data['filename'])[0]
+            with open(output_path, 'w', encoding='utf-8') as f:
+                json.dump(json_data, f, indent=2, ensure_ascii=False)
             
-            # Save tables from different extraction methods
-            if 'extracted_tables' in data:
-                for i, table in enumerate(data['extracted_tables']):
-                    try:
-                        if 'data' in table and table['data']:
-                            csv_filename = f"extracted_tables/{filename_base}_table_{i+1}_{table['method']}.csv"
-                            
-                            if table['method'] in ['tabula', 'camelot_lattice']:
-                                # These are already in records format
-                                df = pd.DataFrame(table['data'])
-                            else:
-                                # Convert list of lists to DataFrame
-                                df = pd.DataFrame(table['data'])
-                            
-                            df.to_csv(csv_filename, index=False)
-                            table_count += 1
-                            
-                    except Exception as e:
-                        print(f"    ⚠️  Error saving table {i+1}: {str(e)}")
-                        continue
-        
-        if table_count > 0:
-            print(f"📊 Saved {table_count} tables as CSV files in 'extracted_tables' folder")
-    
-    def create_summary_report(self, results):
-        """Create a comprehensive summary report"""
-        try:
-            with open('extraction_summary.txt', 'w', encoding='utf-8') as f:
-                f.write("📋 DOCUMENT EXTRACTION SUMMARY REPORT\n")
-                f.write("=" * 60 + "\n")
-                f.write(f"📅 Generated: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-                f.write(f"📁 Total Files Processed: {len(results)}\n\n")
-                
-                # Overall statistics
-                total_words = sum(data.get('total_words', 0) for data in results.values())
-                total_chars = sum(data.get('total_characters', 0) for data in results.values())
-                total_images = sum(data.get('total_images', 0) for data in results.values())
-                total_tables = sum(len(data.get('extracted_tables', [])) for data in results.values())
-                total_size_mb = sum(data.get('file_size_mb', 0) for data in results.values())
-                
-                f.write("📊 OVERALL STATISTICS:\n")
-                f.write("-" * 30 + "\n")
-                f.write(f"📝 Total Words: {total_words:,}\n")
-                f.write(f"🔤 Total Characters: {total_chars:,}\n")
-                f.write(f"🖼️  Total Images: {total_images:,}\n")
-                f.write(f"📊 Total Tables: {total_tables:,}\n")
-                f.write(f"💾 Total File Size: {total_size_mb:.2f} MB\n\n")
-                
-                # File type distribution
-                file_types = Counter(data['file_type'] for data in results.values())
-                f.write("📈 FILE TYPE DISTRIBUTION:\n")
-                f.write("-" * 30 + "\n")
-                for file_type, count in file_types.items():
-                    f.write(f"{file_type}: {count} files\n")
-                f.write("\n")
-                
-                # Detailed file information
-                f.write("📄 DETAILED FILE INFORMATION:\n")
-                f.write("=" * 60 + "\n")
-                
-                for file_path, data in results.items():
-                    f.write(f"\n📁 File: {data['filename']}\n")
-                    f.write(f"   Type: {data['file_type']}\n")
-                    f.write(f"   Size: {data.get('file_size_mb', 0):.2f} MB\n")
-                    
-                    if data['file_type'] == 'PDF':
-                        f.write(f"   Pages: {data.get('page_count', 0)}\n")
-                        f.write(f"   Words: {data.get('total_words', 0):,}\n")
-                        f.write(f"   Characters: {data.get('total_characters', 0):,}\n")
-                        f.write(f"   Images: {data.get('total_images', 0)}\n")
-                        f.write(f"   Tables: {len(data.get('extracted_tables', []))}\n")
-                        
-                        # Font information
-                        fonts = data.get('fonts_used', [])
-                        if fonts:
-                            f.write(f"   Fonts Used: {', '.join(fonts[:5])}")
-                            if len(fonts) > 5:
-                                f.write(f" ... (+{len(fonts)-5} more)")
-                            f.write("\n")
-                        
-                        # Metadata
-                        metadata = data.get('metadata', {})
-                        if metadata:
-                            f.write("   Metadata:\n")
-                            for key, value in metadata.items():
-                                f.write(f"     {key}: {value}\n")
-                    
-                    elif data['file_type'] == 'DOCX':
-                        f.write(f"   Paragraphs: {len(data.get('paragraphs', []))}\n")
-                        f.write(f"   Words: {data.get('total_words', 0):,}\n")
-                        f.write(f"   Characters: {data.get('total_characters', 0):,}\n")
-                        f.write(f"   Tables: {len(data.get('tables', []))}\n")
-                    
-                    elif data['file_type'] == 'PPTX':
-                        f.write(f"   Slides: {data.get('total_slides', 0)}\n")
-                        f.write(f"   Words: {data.get('total_words', 0):,}\n")
-                        f.write(f"   Characters: {data.get('total_characters', 0):,}\n")
-                        
-                        # Count tables across all slides
-                        total_slide_tables = sum(len(slide.get('tables', [])) for slide in data.get('slides', []))
-                        f.write(f"   Tables: {total_slide_tables}\n")
-                    
-                    elif data['file_type'] == 'Excel':
-                        f.write(f"   Sheets: {len(data.get('sheets', []))}\n")
-                        
-                        # Sheet details
-                        for sheet in data.get('sheets', []):
-                            f.write(f"     - {sheet['sheet_name']}: {sheet['shape'][0]} rows x {sheet['shape'][1]} cols\n")
-                
-                # Table extraction summary
-                if total_tables > 0:
-                    f.write(f"\n📊 TABLE EXTRACTION SUMMARY:\n")
-                    f.write("-" * 40 + "\n")
-                    
-                    method_counts = Counter()
-                    confidence_counts = Counter()
-                    
-                    for data in results.values():
-                        for table in data.get('extracted_tables', []):
-                            method_counts[table.get('method', 'unknown')] += 1
-                            confidence_counts[table.get('confidence', 'unknown')] += 1
-                    
-                    f.write("Extraction Methods:\n")
-                    for method, count in method_counts.items():
-                        f.write(f"  {method}: {count} tables\n")
-                    
-                    f.write("\nConfidence Levels:\n")
-                    for confidence, count in confidence_counts.items():
-                        f.write(f"  {confidence}: {count} tables\n")
-                
-                # Image extraction summary
-                if total_images > 0:
-                    f.write(f"\n🖼️  IMAGE EXTRACTION SUMMARY:\n")
-                    f.write("-" * 40 + "\n")
-                    
-                    for data in results.values():
-                        if data.get('total_images', 0) > 0:
-                            f.write(f"From {data['filename']}: {data['total_images']} images\n")
-                            
-                            # Image details from pages
-                            for page in data.get('pages', []):
-                                if page.get('images'):
-                                    f.write(f"  Page {page['page_number']}: {len(page['images'])} images\n")
-                
-                # Processing warnings and recommendations
-                f.write(f"\n⚠️  PROCESSING NOTES:\n")
-                f.write("-" * 30 + "\n")
-                
-                # Check for potential issues
-                large_files = [data for data in results.values() if data.get('file_size_mb', 0) > 50]
-                if large_files:
-                    f.write(f"📁 Large files detected ({len(large_files)} files > 50MB)\n")
-                
-                # Check for files with many images
-                image_heavy_files = [data for data in results.values() if data.get('total_images', 0) > 20]
-                if image_heavy_files:
-                    f.write(f"🖼️  Image-heavy files detected ({len(image_heavy_files)} files > 20 images)\n")
-                
-                # Check for missing libraries
-                missing_libs = []
-                if not HAS_PDFPLUMBER:
-                    missing_libs.append("pdfplumber")
-                if not HAS_TABULA:
-                    missing_libs.append("tabula-py")
-                if not HAS_CAMELOT:
-                    missing_libs.append("camelot-py")
-                if not HAS_CV2:
-                    missing_libs.append("opencv-python")
-                
-                if missing_libs:
-                    f.write(f"📦 Missing optional libraries: {', '.join(missing_libs)}\n")
-                    f.write("   Install these for enhanced extraction capabilities\n")
-                
-                f.write(f"\n✅ Report generated successfully!\n")
-                f.write("   Files created:\n")
-                f.write("   - extraction_results.json (full data)\n")
-                f.write("   - extraction_summary.txt (this report)\n")
-                f.write("   - extracted_images/ (folder with images)\n")
-                f.write("   - extracted_tables/ (folder with CSV tables)\n")
-            
-            print("✅ Summary report saved as: extraction_summary.txt")
+            logger.info(f"Extracted data saved to: {output_path}")
+            return output_path
             
         except Exception as e:
-            print(f"❌ Error creating summary report: {str(e)}")
+            logger.error(f"Error saving extracted data: {e}")
+            return None
     
-    def generate_extraction_stats(self, results):
-        """Generate detailed extraction statistics"""
-        stats = {
-            'total_files': len(results),
-            'file_types': Counter(data['file_type'] for data in results.values()),
-            'total_words': sum(data.get('total_words', 0) for data in results.values()),
-            'total_characters': sum(data.get('total_characters', 0) for data in results.values()),
-            'total_images': sum(data.get('total_images', 0) for data in results.values()),
-            'total_tables': sum(len(data.get('extracted_tables', [])) for data in results.values()),
-            'total_size_mb': sum(data.get('file_size_mb', 0) for data in results.values()),
-            'processing_time': getattr(self, 'processing_time', 0)
+    def generate_file_summary(self, data: Dict) -> Dict:
+        """Generate a summary of extracted file data"""
+        summary = {
+            'file_type': data.get('file_type', 'Unknown'),
+            'processing_success': True,
+            'key_metrics': {}
         }
         
-        # Add file-specific stats
-        stats['pdf_stats'] = {
-            'count': sum(1 for data in results.values() if data['file_type'] == 'PDF'),
-            'total_pages': sum(data.get('page_count', 0) for data in results.values() if data['file_type'] == 'PDF'),
-            'fonts_used': list(set(font for data in results.values() if data['file_type'] == 'PDF' for font in data.get('fonts_used', [])))
-        }
-        
-        return stats
+        try:
+            if data.get('file_type') == 'PDF':
+                summary['key_metrics'] = {
+                    'pages': data.get('page_count', 0),
+                    'words': data.get('total_words', 0),
+                    'images': data.get('total_images', 0),
+                    'tables': data.get('total_tables', 0),
+                    'avg_words_per_page': round(data.get('total_words', 0) / max(1, data.get('page_count', 1)), 2)
+                }
+            elif data.get('file_type') == 'DOCX':
+                summary['key_metrics'] = {
+                    'paragraphs': len(data.get('paragraphs', [])),
+                    'tables': len(data.get('tables', [])),
+                    'words': data.get('total_words', 0)
+                }
+            elif data.get('file_type') == 'PPTX':
+                summary['key_metrics'] = {
+                    'slides': data.get('total_slides', 0),
+                    'words': data.get('total_words', 0),
+                    'avg_words_per_slide': round(data.get('total_words', 0) / max(1, data.get('total_slides', 1)), 2)
+                }
+            elif data.get('file_type') == 'Excel':
+                summary['key_metrics'] = {
+                    'sheets': data.get('total_sheets', 0),
+                    'rows': data.get('total_rows', 0),
+                    'columns': data.get('total_columns', 0)
+                }
+                
+        except Exception as e:
+            logger.error(f"Error generating summary: {e}")
+            summary['processing_success'] = False
+            
+        return summary
     
     def cleanup_temp_files(self):
         """Clean up temporary files and directories"""
         try:
-            # Remove empty directories
-            for folder in ['extracted_images', 'extracted_tables']:
-                if os.path.exists(folder) and not os.listdir(folder):
-                    os.rmdir(folder)
-                    print(f"🧹 Removed empty folder: {folder}")
+            temp_dirs = ['temp_processing']
+            for temp_dir in temp_dirs:
+                if os.path.exists(temp_dir):
+                    import shutil
+                    shutil.rmtree(temp_dir)
+                    os.makedirs(temp_dir, exist_ok=True)
+            
+            logger.info("Temporary files cleaned up")
+            
         except Exception as e:
-            print(f"⚠️  Error during cleanup: {str(e)}")
+            logger.error(f"Error cleaning up temp files: {e}")
+    
+    def get_processing_report(self) -> Dict:
+        """Generate a comprehensive processing report"""
+        report = {
+            'processing_statistics': self.processing_stats,
+            'files_processed': len(self.extracted_data),
+            'total_processing_time': sum(
+                data.get('processing_time_seconds', 0) 
+                for data in self.extracted_data.values()
+            ),
+            'file_breakdown': {},
+            'performance_metrics': {
+                'avg_processing_time': 0,
+                'pages_per_second': 0,
+                'images_per_second': 0,
+                'tables_per_second': 0
+            }
+        }
+        
+        # Calculate file type breakdown
+        file_types = {}
+        for data in self.extracted_data.values():
+            file_type = data.get('file_type', 'Unknown')
+            file_types[file_type] = file_types.get(file_type, 0) + 1
+        
+        report['file_breakdown'] = file_types
+        
+        # Calculate performance metrics
+        total_time = report['total_processing_time']
+        if total_time > 0:
+            report['performance_metrics']['avg_processing_time'] = round(
+                total_time / max(1, len(self.extracted_data)), 2
+            )
+            report['performance_metrics']['pages_per_second'] = round(
+                self.processing_stats['pages_processed'] / total_time, 2
+            )
+            report['performance_metrics']['images_per_second'] = round(
+                self.processing_stats['images_extracted'] / total_time, 2
+            )
+            report['performance_metrics']['tables_per_second'] = round(
+                self.processing_stats['tables_extracted'] / total_time, 2
+            )
+        
+        return report
+    
+    def __del__(self):
+        """Cleanup when object is destroyed"""
+        try:
+            if hasattr(self, 'conn') and self.conn:
+                self.conn.close()
+        except:
+            pass
 
-def main():
-    """Main function to run the document extractor"""
-    print("🚀 Comprehensive Document Extractor")
-    print("=" * 60)
-    print("Supported formats: PDF, DOCX, PPTX, XLSX, XLS")
-    print()
-    
-    # Initialize the extractor
-    extractor = ComprehensiveDocumentExtractor()
-    
-    # Get file paths from user
-    print("📁 Please provide file paths to process:")
-    print("   - Enter file paths separated by commas")
-    print("   - Or drag and drop files into the terminal")
-    print("   - Press Enter when done")
-    print()
-    
+# Example usage and utility functions
+def process_directory(directory_path: str, extractor: OptimizedDocumentExtractor) -> Dict:
+    """Process all supported files in a directory"""
     file_paths = []
-    while True:
-        user_input = input("File path (or 'done' to finish): ").strip()
-        
-        if user_input.lower() in ['done', 'finish', 'exit', '']:
-            break
-        
-        # Handle multiple files separated by commas
-        if ',' in user_input:
-            paths = [path.strip().strip('"\'') for path in user_input.split(',')]
-            file_paths.extend(paths)
-        else:
-            file_paths.append(user_input.strip('"\''))
+    
+    for root, dirs, files in os.walk(directory_path):
+        for file in files:
+            file_path = os.path.join(root, file)
+            file_ext = os.path.splitext(file)[1].lower()
+            
+            if file_ext in extractor.supported_formats:
+                file_paths.append(file_path)
+    
+    logger.info(f"Found {len(file_paths)} supported files in directory")
     
     if not file_paths:
-        print("❌ No files provided. Exiting.")
-        return
+        logger.warning("No supported files found in directory")
+        return {}
     
-    # Validate file paths
-    valid_paths = []
-    for path in file_paths:
-        if os.path.exists(path):
-            ext = os.path.splitext(path)[1].lower()
-            if ext in extractor.supported_formats:
-                valid_paths.append(path)
-            else:
-                print(f"⚠️  Skipping unsupported file: {path}")
-        else:
-            print(f"⚠️  File not found: {path}")
+    results = extractor.process_files_optimized(file_paths)
+    extractor.extracted_data.update(results)
     
-    if not valid_paths:
-        print("❌ No valid files to process. Exiting.")
-        return
+    return results
+
+def main():
+    """Main function demonstrating usage"""
+    import argparse
     
-    # Record start time
-    start_time = pd.Timestamp.now()
+    parser = argparse.ArgumentParser(description='Optimized Document Extractor')
+    parser.add_argument('input_path', help='Path to file or directory to process')
+    parser.add_argument('--output', '-o', default='extracted_data.json', help='Output JSON file path')
+    parser.add_argument('--workers', '-w', type=int, default=None, help='Number of worker threads')
+    parser.add_argument('--chunk-size', '-c', type=int, default=50, help='Chunk size for processing')
+    parser.add_argument('--memory-limit', '-m', type=int, default=1024, help='Memory limit in MB')
+    parser.add_argument('--disable-cache', action='store_true', help='Disable caching')
+    parser.add_argument('--report', '-r', action='store_true', help='Generate processing report')
     
-    # Process files
+    args = parser.parse_args()
+    
+    # Initialize extractor
+    extractor = OptimizedDocumentExtractor(
+        max_workers=args.workers,
+        chunk_size=args.chunk_size,
+        enable_caching=not args.disable_cache,
+        memory_limit_mb=args.memory_limit
+    )
+    
     try:
-        results = extractor.process_files(valid_paths)
+        start_time = time.time()
         
-        if results:
-            # Record processing time
-            extractor.processing_time = (pd.Timestamp.now() - start_time).total_seconds()
-            
-            # Save results
-            extractor.save_results(results)
-            
-            # Generate and display final statistics
-            stats = extractor.generate_extraction_stats(results)
-            
-            print("\n" + "=" * 60)
-            print("📊 FINAL EXTRACTION STATISTICS")
-            print("=" * 60)
-            print(f"✅ Successfully processed: {stats['total_files']} files")
-            print(f"📝 Total words extracted: {stats['total_words']:,}")
-            print(f"🔤 Total characters: {stats['total_characters']:,}")
-            print(f"🖼️  Total images: {stats['total_images']:,}")
-            print(f"📊 Total tables: {stats['total_tables']:,}")
-            print(f"💾 Total file size: {stats['total_size_mb']:.2f} MB")
-            print(f"⏱️  Processing time: {stats['processing_time']:.2f} seconds")
-            
-            if stats['pdf_stats']['count'] > 0:
-                print(f"📄 PDF files: {stats['pdf_stats']['count']} ({stats['pdf_stats']['total_pages']} pages)")
-            
-            print("\n📁 Output files created:")
-            print("   - extraction_results.json")
-            print("   - extraction_summary.txt")
-            if stats['total_images'] > 0:
-                print("   - extracted_images/ (folder)")
-            if stats['total_tables'] > 0:
-                print("   - extracted_tables/ (folder)")
-            
-            # Cleanup
-            extractor.cleanup_temp_files()
-            
-            print("\n🎉 Document extraction completed successfully!")
-            
+        # Process input
+        if os.path.isfile(args.input_path):
+            logger.info(f"Processing single file: {args.input_path}")
+            results = extractor.process_files_optimized([args.input_path])
+            extractor.extracted_data.update(results)
+        elif os.path.isdir(args.input_path):
+            logger.info(f"Processing directory: {args.input_path}")
+            results = process_directory(args.input_path, extractor)
         else:
-            print("❌ No files were successfully processed.")
+            logger.error(f"Input path does not exist: {args.input_path}")
+            return
+        
+        total_time = time.time() - start_time
+        
+        # Save results
+        output_file = extractor.save_extracted_data(args.output)
+        
+        if output_file:
+            logger.info(f"Processing completed in {total_time:.2f} seconds")
+            logger.info(f"Results saved to: {output_file}")
             
+            # Generate report if requested
+            if args.report:
+                report = extractor.get_processing_report()
+                report_file = args.output.replace('.json', '_report.json')
+                
+                with open(report_file, 'w', encoding='utf-8') as f:
+                    json.dump(report, f, indent=2, ensure_ascii=False)
+                
+                logger.info(f"Processing report saved to: {report_file}")
+                
+                # Print summary
+                print("\n" + "="*50)
+                print("PROCESSING SUMMARY")
+                print("="*50)
+                print(f"Files processed: {report['files_processed']}")
+                print(f"Total time: {report['total_processing_time']:.2f} seconds")
+                print(f"Pages processed: {report['processing_statistics']['pages_processed']}")
+                print(f"Images extracted: {report['processing_statistics']['images_extracted']}")
+                print(f"Tables extracted: {report['processing_statistics']['tables_extracted']}")
+                print(f"Average processing time: {report['performance_metrics']['avg_processing_time']:.2f} seconds/file")
+                print("="*50)
+        
+        # Cleanup
+        extractor.cleanup_temp_files()
+        
     except KeyboardInterrupt:
-        print("\n⏹️  Process interrupted by user.")
-        extractor.cleanup_temp_files()
+        logger.info("Processing interrupted by user")
     except Exception as e:
-        print(f"\n❌ Unexpected error: {str(e)}")
-        extractor.cleanup_temp_files()
+        logger.error(f"Error during processing: {e}")
+    finally:
+        # Ensure cleanup
+        try:
+            extractor.cleanup_temp_files()
+        except:
+            pass
 
 if __name__ == "__main__":
+    # Add missing import for io
+    import io
     main()
