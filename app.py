@@ -44,26 +44,22 @@ if uploaded_file is not None:
     with st.spinner("Processing file..."):
         if file_type == "pdf":
             pages = process_pdf(file_bytes)
-            page_num = st.selectbox("Select Page", range(len(pages)))
-            page = pages[page_num]
-            st.subheader("Text Content")
-            st.write(page["text"])
-            st.subheader("Images")
-            for img in page["images"]:
-                st.image(img, use_container_width=True)
-            st.subheader("Tables")
-            for i, table in enumerate(page["tables"]):
-                st.write(f"Table {i+1}")
-                st.dataframe(table)
+
+            # --- Summary ---
+            total_words = sum(len(p["text"].split()) for p in pages)
+            total_chars = sum(len(p["text"]) for p in pages)
+            total_images = sum(len(p["images"]) for p in pages)
+            total_tables = sum(len(p["tables"]) for p in pages)
 
             summary = {
                 "file_type": "PDF",
                 "total_pages": len(pages),
-                "page_selected": page_num,
-                "text_chars": len(page["text"]),
-                "image_count": len(page["images"]),
-                "table_count": len(page["tables"]),
+                "total_words": total_words,
+                "total_characters": total_chars,
+                "total_images": total_images,
+                "total_tables": total_tables
             }
+
             json_output = {
                 "pages": [
                     {
@@ -75,51 +71,70 @@ if uploaded_file is not None:
                 ]
             }
 
+            st.markdown("### 📋 Summary")
+            st.json(summary)
+
+            page_num = st.selectbox("Select Page", range(len(pages)), index=0)
+            page = pages[page_num]
+
+            st.markdown(f"## 📄 Page {page_num + 1}")
+            st.subheader("Text Content")
+            st.write(page["text"])
+
+            st.subheader("Images")
+            for img in page["images"]:
+                st.image(img, use_container_width=True)
+
+            st.subheader("Tables")
+            for i, table in enumerate(page["tables"]):
+                st.write(f"Table {i + 1}")
+                st.dataframe(table)
+
         elif file_type == "docx":
             content = process_docx(file_bytes)
-            st.subheader("Text Content")
-            st.write(content["text"])
             summary = {
                 "file_type": "DOCX",
                 "text_chars": len(content["text"]),
+                "word_count": len(content["text"].split()),
                 "paragraphs": content["text"].count("\n") + 1
             }
-            json_output = {
-                "text": content["text"]
-            }
+            json_output = {"text": content["text"]}
+
+            st.markdown("### 📋 Summary")
+            st.json(summary)
+            st.subheader("Text Content")
+            st.write(content["text"])
 
         elif file_type == "pptx":
             slides = process_pptx(file_bytes)
-            slide_num = st.selectbox("Select Slide", range(len(slides)))
-            st.subheader("Slide Text")
-            st.write(slides[slide_num]["text"])
             summary = {
                 "file_type": "PPTX",
                 "total_slides": len(slides),
-                "selected_slide": slide_num
+                "total_words": sum(len(s["text"].split()) for s in slides)
             }
-            json_output = {
-                "slides": slides
-            }
+            json_output = {"slides": slides}
+
+            st.markdown("### 📋 Summary")
+            st.json(summary)
+            slide_num = st.selectbox("Select Slide", range(len(slides)))
+            st.subheader("Slide Text")
+            st.write(slides[slide_num]["text"])
 
         elif file_type == "xlsx":
             sheets = process_excel(file_bytes)
+            summary = {
+                "file_type": "XLSX",
+                "sheets": list(sheets.keys())
+            }
+            json_output = {"sheets": {k: v.to_dict() for k, v in sheets.items()}}
+
+            st.markdown("### 📋 Summary")
+            st.json(summary)
             sheet = st.selectbox("Select Sheet", list(sheets.keys()))
             st.subheader(f"Sheet: {sheet}")
             st.dataframe(sheets[sheet])
-            summary = {
-                "file_type": "XLSX",
-                "sheets": list(sheets.keys()),
-                "selected_sheet": sheet,
-                "row_count": len(sheets[sheet])
-            }
-            json_output = {
-                "sheets": {k: v.to_dict() for k, v in sheets.items()}
-            }
 
-        st.markdown("### 📋 Summary")
-        st.json(summary)
-
+        # --- Download Extracted JSON ---
         st.markdown("### 📦 Download Extracted JSON")
         json_str = json.dumps(json_output, indent=2)
         st.markdown(generate_download_button(json_str, "extracted_data.json", "📥 Download JSON"), unsafe_allow_html=True)
