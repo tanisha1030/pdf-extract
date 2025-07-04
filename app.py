@@ -166,42 +166,84 @@ DEFAULT_OPTIONS = {
 }
 
 def get_tables_from_data(data):
-    """Extract tables from data with proper structure handling"""
+    """Extract tables from data with comprehensive debugging"""
     tables = []
     
-    # Primary check: tables at root level
-    if 'tables' in data and data['tables']:
-        tables = data['tables']
+    # Debug: Print the keys in the data structure
+    print(f"DEBUG: Data keys: {list(data.keys())}")
     
-    # Fallback: check extracted_tables
-    elif 'extracted_tables' in data and data['extracted_tables']:
-        tables = data['extracted_tables']
+    # Check all possible locations where tables might be stored
+    possible_locations = [
+        ('tables', data.get('tables')),
+        ('extracted_tables', data.get('extracted_tables')),
+        ('all_tables', data.get('all_tables')),
+        ('table_data', data.get('table_data'))
+    ]
     
-    # If no tables at root level, check pages
-    elif 'pages' in data and not tables:
-        for page in data['pages']:
-            if 'tables' in page and page['tables']:
-                tables.extend(page['tables'])
+    for location_name, location_data in possible_locations:
+        if location_data:
+            print(f"DEBUG: Found {location_name} with type: {type(location_data)}")
+            if isinstance(location_data, list):
+                print(f"DEBUG: {location_name} has {len(location_data)} items")
+                tables.extend(location_data)
+            elif isinstance(location_data, dict):
+                print(f"DEBUG: {location_name} is a dict with keys: {list(location_data.keys())}")
+                tables.append(location_data)
+            break  # Stop at first valid location to avoid duplicates
     
-    # Ensure we return a list and filter out None/empty values
-    if not isinstance(tables, list):
-        tables = [tables] if tables else []
+    # If no tables found at root level, check in pages
+    if not tables and 'pages' in data:
+        print("DEBUG: No root-level tables found, checking pages...")
+        for page_idx, page in enumerate(data['pages']):
+            page_tables = page.get('tables', [])
+            if page_tables:
+                print(f"DEBUG: Page {page_idx + 1} has {len(page_tables)} tables")
+                tables.extend(page_tables)
     
-    # Filter out None/empty tables
-    valid_tables = [table for table in tables if table is not None]
+    # Final validation
+    valid_tables = [table for table in tables if table is not None and table != {}]
+    print(f"DEBUG: Final valid table count: {len(valid_tables)}")
     
     return valid_tables
 
 def count_total_tables(results):
-    """Count total tables across all files"""
+    """Count total tables across all files with debugging"""
     total_tables = 0
     
+    print("\nDEBUG: Starting table count...")
     for file_name, data in results.items():
         file_tables = get_tables_from_data(data)
-        total_tables += len(file_tables)
+        file_count = len(file_tables)
+        total_tables += file_count
+        print(f"DEBUG: {file_name} has {file_count} tables")
     
+    print(f"DEBUG: Total tables across all files: {total_tables}")
     return total_tables
 
+# Alternative function to inspect the actual data structure
+def inspect_data_structure(results):
+    """Inspect the actual data structure to understand table storage"""
+    print("\n=== DATA STRUCTURE INSPECTION ===")
+    
+    for file_name, data in results.items():
+        print(f"\nFile: {file_name}")
+        print(f"Top-level keys: {list(data.keys())}")
+        
+        # Check each key for potential table data
+        for key, value in data.items():
+            if 'table' in key.lower():
+                print(f"  {key}: {type(value)} - {len(value) if isinstance(value, (list, dict)) else 'N/A'}")
+        
+        # Check pages structure
+        if 'pages' in data:
+            print(f"  Pages count: {len(data['pages'])}")
+            for i, page in enumerate(data['pages'][:3]):  # Show first 3 pages
+                print(f"    Page {i+1} keys: {list(page.keys())}")
+                for key, value in page.items():
+                    if 'table' in key.lower():
+                        print(f"      {key}: {type(value)} - {len(value) if isinstance(value, (list, dict)) else 'N/A'}")
+    
+    print("=== END INSPECTION ===\n")
 def convert_table_to_dataframe(table_data):
     """Convert various table formats to pandas DataFrame"""
     try:
