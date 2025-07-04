@@ -23,6 +23,9 @@ openpyxl>=3.1.0
 pandas>=2.0.0
 numpy>=1.24.0
 
+# System monitoring for large file processing
+psutil>=5.9.0
+
 # Additional dependencies for camelot
 matplotlib>=3.7.0
 ghostscript>=0.7
