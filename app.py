@@ -161,7 +161,8 @@ DEFAULT_OPTIONS = {
     'use_pdfplumber': True,
     'save_as_json': True,
     'save_as_csv': True,
-    'create_summary': True
+    'create_summary': True,
+    'max_workers': 4
 }
 
 def convert_table_to_dataframe(table_data):
@@ -320,28 +321,9 @@ def main():
                 file_size_mb = len(file.getvalue()) / (1024 * 1024)
                 st.write(f"{i}. **{file.name}** ({file_size_mb:.2f} MB)")
             
-            # Processing options
-            with st.expander("⚙️ Processing Options"):
-                col1, col2 = st.columns(2)
-                with col1:
-                    extract_images = st.checkbox("Extract Images", value=True)
-                    extract_tables = st.checkbox("Extract Tables", value=True)
-                    extract_metadata = st.checkbox("Extract Metadata", value=True)
-                with col2:
-                    use_tabula = st.checkbox("Use Tabula", value=True)
-                    use_camelot = st.checkbox("Use Camelot", value=True)
-                    max_workers = st.number_input("Max Workers", min_value=1, max_value=8, value=4)
-            
             # Process button
             if st.button("🚀 Start Processing", type="primary", use_container_width=True):
-                process_pdfs(uploaded_files, {
-                    'extract_images': extract_images,
-                    'extract_tables': extract_tables,
-                    'extract_metadata': extract_metadata,
-                    'use_tabula': use_tabula,
-                    'use_camelot': use_camelot,
-                    'max_workers': max_workers
-                })
+                process_pdfs(uploaded_files, DEFAULT_OPTIONS)
     
     with col2:
         st.header("📊 Processing Status")
@@ -386,7 +368,7 @@ def process_pdfs(uploaded_files, options):
                 progress_bar.progress(progress)
                 status_text.text(f"Saving file {i + 1}/{len(uploaded_files)}: {uploaded_file.name}")
             
-            # Initialize extractor with user options
+            # Initialize extractor with default options
             status_text.text("Initializing PDF extractor...")
             extractor = OptimizedPDFExtractor(
                 max_workers=options['max_workers'],
@@ -768,5 +750,6 @@ def display_results(results):
             mime="text/plain",
             use_container_width=True
         )
+
 if __name__ == "__main__":
     main()
