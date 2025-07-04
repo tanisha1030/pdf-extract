@@ -8,7 +8,7 @@ import base64
 st.set_page_config(page_title="Universal Info Extractor", layout="wide")
 st.title("📄 Universal File Information Extractor")
 
-# Apply minimal styling for better structure
+# Styling
 st.markdown("""
 <style>
     .summary-metrics { margin-top: 2rem; }
@@ -53,7 +53,7 @@ if uploaded_file is not None:
         if file_type == "pdf":
             pages = process_pdf(file_bytes)
 
-            # --- Summary ---
+            # --- Overall Summary ---
             total_words = sum(len(p["text"].split()) for p in pages)
             total_chars = sum(len(p["text"]) for p in pages)
             total_images = sum(len(p["images"]) for p in pages)
@@ -79,7 +79,7 @@ if uploaded_file is not None:
                 ]
             }
 
-            st.markdown("### 📋 Summary")
+            st.markdown("### 📋 Overall Summary")
             col1, col2, col3, col4, col5 = st.columns(5)
             col1.metric("Pages", len(pages))
             col2.metric("Words", total_words)
@@ -87,11 +87,26 @@ if uploaded_file is not None:
             col4.metric("Images", total_images)
             col5.metric("Tables", total_tables)
 
-            # Page selector after summary
+            # --- Page Selector ---
             page_num = st.selectbox("Select Page", range(len(pages)), index=0)
             page = pages[page_num]
 
             st.markdown(f"## 📄 Page {page_num + 1}")
+
+            # --- Per Page Summary ---
+            page_words = len(page["text"].split())
+            page_chars = len(page["text"])
+            page_images = len(page["images"])
+            page_tables = len(page["tables"])
+
+            st.markdown("#### 📊 Page Summary")
+            pc1, pc2, pc3, pc4, pc5 = st.columns(5)
+            pc1.metric("Page", page_num + 1)
+            pc2.metric("Words", page_words)
+            pc3.metric("Characters", page_chars)
+            pc4.metric("Images", page_images)
+            pc5.metric("Tables", page_tables)
+
             st.subheader("📝 Text Content")
             st.code(page["text"], language='markdown')
 
@@ -162,7 +177,7 @@ if uploaded_file is not None:
             st.subheader(f"📄 Sheet: {sheet}")
             st.dataframe(sheets[sheet], use_container_width=True)
 
-        # --- Download Extracted JSON ---
+        # --- Download JSON ---
         st.markdown("### 📦 Download Extracted JSON")
         json_str = json.dumps(json_output, indent=2)
         st.markdown(generate_download_button(json_str, "extracted_data.json", "📥 Download JSON"), unsafe_allow_html=True)
