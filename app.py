@@ -130,6 +130,14 @@ st.markdown("""
         max-height: 300px;
         overflow-y: auto;
     }
+    
+    .table-info {
+        background: #f8f9fa;
+        padding: 0.5rem;
+        border-radius: 4px;
+        border-left: 3px solid #667eea;
+        margin-bottom: 1rem;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -155,6 +163,104 @@ DEFAULT_OPTIONS = {
     'save_as_csv': True,
     'create_summary': True
 }
+
+def convert_table_to_dataframe(table_data):
+    """Convert various table formats to pandas DataFrame"""
+    try:
+        if not table_data:
+            return None
+        
+        # Handle different data formats
+        if isinstance(table_data, pd.DataFrame):
+            return table_data
+        
+        elif isinstance(table_data, dict):
+            # Handle dict format
+            if 'data' in table_data:
+                return convert_table_to_dataframe(table_data['data'])
+            else:
+                return pd.DataFrame(table_data)
+        
+        elif isinstance(table_data, list):
+            if not table_data:
+                return None
+            
+            # Check if it's a list of dictionaries
+            if isinstance(table_data[0], dict):
+                return pd.DataFrame(table_data)
+            
+            # Check if it's a list of lists
+            elif isinstance(table_data[0], list):
+                if len(table_data) > 1:
+                    # First row as headers
+                    headers = table_data[0]
+                    data_rows = table_data[1:]
+                    return pd.DataFrame(data_rows, columns=headers)
+                else:
+                    return pd.DataFrame(table_data)
+            
+            # Handle single list
+            else:
+                return pd.DataFrame([table_data])
+        
+        else:
+            # Try to convert to string and then to DataFrame
+            return pd.DataFrame([str(table_data)])
+    
+    except Exception as e:
+        st.error(f"Error converting table data: {str(e)}")
+        return None
+
+def display_table_with_info(table, table_index, file_name):
+    """Display a table with proper formatting and metadata"""
+    
+    # Table metadata
+    st.markdown(f"""
+    <div class="table-info">
+        <strong>Table {table_index}</strong> - 
+        Method: {table.get('method', 'unknown')} | 
+        Page: {table.get('page_number', 'unknown')} | 
+        Confidence: {table.get('confidence', 'N/A')}
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Convert table data to DataFrame
+    table_data = table.get('data')
+    if not table_data:
+        st.warning("No data found in this table")
+        return
+    
+    df = convert_table_to_dataframe(table_data)
+    
+    if df is not None and not df.empty:
+        # Display table shape
+        st.write(f"**Shape:** {df.shape[0]} rows × {df.shape[1]} columns")
+        
+        # Display the table
+        st.dataframe(
+            df,
+            use_container_width=True,
+            hide_index=True
+        )
+        
+        # Option to download individual table
+        csv_data = df.to_csv(index=False)
+        st.download_button(
+            label=f"📥 Download Table {table_index} (CSV)",
+            data=csv_data,
+            file_name=f"{os.path.splitext(file_name)[0]}_table_{table_index}.csv",
+            mime="text/csv",
+            key=f"download_{file_name}_{table_index}"
+        )
+        
+        # Show raw data for debugging (optional)
+        with st.expander("🔍 Show Raw Data (Debug)"):
+            st.json(table_data)
+    
+    else:
+        st.error("Could not convert table data to displayable format")
+        st.write("Raw table data:")
+        st.json(table_data)
 
 def main():
     # Header
@@ -388,7 +494,13 @@ def display_results(results):
     total_words = sum(data.get('total_words', 0) for data in results.values())
     total_chars = sum(data.get('total_characters', 0) for data in results.values())
     total_images = sum(data.get('total_images', 0) for data in results.values())
-    total_tables = sum(len(data.get('extracted_tables', [])) for data in results.values())
+    
+    # Fixed table counting - handle different possible key names
+    total_tables = 0
+    for data in results.values():
+        # Check different possible keys for tables
+        tables = data.get('tables', []) or data.get('extracted_tables', []) or []
+        total_tables += len(tables)
     
     # Statistics cards
     col1, col2, col3, col4, col5 = st.columns(5)
@@ -420,7 +532,10 @@ def display_results(results):
                     st.write(f"**Pages:** {data.get('page_count', 0)}")
                     st.write(f"**Words:** {data.get('total_words', 0):,}")
                     st.write(f"**Images:** {data.get('total_images', 0)}")
-                    st.write(f"**Tables:** {len(data.get('extracted_tables', []))}")
+                    
+                    # Handle different table key names
+                    tables = data.get('tables', []) or data.get('extracted_tables', []) or []
+                    st.write(f"**Tables:** {len(tables)}")
                 
                 with col2:
                     # Show metadata
@@ -486,48 +601,27 @@ def display_results(results):
             # Table extraction methods summary
             method_counts = Counter()
             for data in results.values():
-                for table in data.get('extracted_tables', []):
+                # Handle different possible keys for tables
+                tables = data.get('tables', []) or data.get('extracted_tables', []) or []
+                for table in tables:
                     method_counts[table.get('method', 'unknown')] += 1
             
-            st.write("**Extraction Methods Used:**")
-            for method, count in method_counts.items():
-                st.write(f"  - {method}: {count} tables")
+            if method_counts:
+                st.write("**Extraction Methods Used:**")
+                for method, count in method_counts.items():
+                    st.write(f"  - {method}: {count} tables")
             
             # Show tables by file
             for file_name, data in results.items():
-                tables = data.get('extracted_tables', [])
+                # Handle different possible keys for tables
+                tables = data.get('tables', []) or data.get('extracted_tables', []) or []
+                
                 if tables:
                     st.write(f"**📄 {file_name}**")
                     
                     for i, table in enumerate(tables, 1):
-                        with st.expander(f"Table {i} ({table.get('method', 'unknown')})"):
-                            
-                            # Show table metadata
-                            col1, col2 = st.columns(2)
-                            with col1:
-                                st.write(f"**Method:** {table.get('method', 'unknown')}")
-                                st.write(f"**Confidence:** {table.get('confidence', 'unknown')}")
-                            with col2:
-                                if 'shape' in table:
-                                    st.write(f"**Shape:** {table['shape'][0]} rows × {table['shape'][1]} columns")
-                            
-                            # Show table data
-                            try:
-                                if table.get('data'):
-                                    if isinstance(table['data'], list) and isinstance(table['data'][0], dict):
-                                        # DataFrame format
-                                        df = pd.DataFrame(table['data'])
-                                        st.dataframe(df, use_container_width=True)
-                                    elif isinstance(table['data'], list):
-                                        # List of lists format
-                                        if table['data']:
-                                            headers = table['data'][0] if table['data'] else []
-                                            df = pd.DataFrame(table['data'][1:], columns=headers)
-                                            st.dataframe(df, use_container_width=True)
-                                    else:
-                                        st.write("Table data format not recognized")
-                            except Exception as e:
-                                st.error(f"Error displaying table: {str(e)}")
+                        with st.expander(f"Table {i} - {table.get('method', 'unknown')} (Page {table.get('page_number', 'N/A')})"):
+                            display_table_with_info(table, i, file_name)
         else:
             st.info("No tables were extracted from the PDF files.")
     
@@ -621,23 +715,22 @@ def display_results(results):
                     for file_name, data in results.items():
                         file_base = os.path.splitext(file_name)[0]
                         
-                        for i, table in enumerate(data.get('extracted_tables', []), 1):
+                        # Handle different possible keys for tables
+                        tables = data.get('tables', []) or data.get('extracted_tables', []) or []
+                        
+                        for i, table in enumerate(tables, 1):
                             try:
-                                if table.get('data'):
+                                table_data = table.get('data')
+                                if table_data:
                                     csv_name = f"{file_base}_table_{i}_{table.get('method', 'unknown')}.csv"
                                     
-                                    if isinstance(table['data'], list) and isinstance(table['data'][0], dict):
-                                        df = pd.DataFrame(table['data'])
-                                    elif isinstance(table['data'], list):
-                                        headers = table['data'][0] if table['data'] else []
-                                        df = pd.DataFrame(table['data'][1:], columns=headers)
-                                    else:
-                                        continue
-                                    
-                                    csv_data = df.to_csv(index=False)
-                                    zip_file.writestr(csv_name, csv_data)
-                                    table_count += 1
+                                    df = convert_table_to_dataframe(table_data)
+                                    if df is not None and not df.empty:
+                                        csv_data = df.to_csv(index=False)
+                                        zip_file.writestr(csv_name, csv_data)
+                                        table_count += 1
                             except Exception as e:
+                                st.error(f"Error exporting table {i} from {file_name}: {str(e)}")
                                 continue
                 
                 if table_count > 0:
@@ -675,7 +768,5 @@ def display_results(results):
             mime="text/plain",
             use_container_width=True
         )
-
-# Run the main function
 if __name__ == "__main__":
     main()
