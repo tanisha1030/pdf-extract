@@ -90,40 +90,11 @@ def create_summary_table(content, file_type):
     return pd.DataFrame(summary_data)
 
 def display_clickable_summary(summary_df, file_type, content=None):
-    """Display summary table with clickable navigation"""
+    """Display summary table"""
     st.subheader("📊 Document Structure Summary")
     
     # Display the summary table
     st.dataframe(summary_df, use_container_width=True)
-    
-    # Create navigation buttons based on file type
-    if file_type == "pdf":
-        st.write("**Quick Navigation:**")
-        cols = st.columns(min(5, len(summary_df)))
-        for i, row in summary_df.iterrows():
-            with cols[i % 5]:
-                if st.button(f"Page {row['Page No']}", key=f"nav_page_{i}"):
-                    st.session_state.selected_page = i
-                    st.rerun()
-    
-    elif file_type == "pptx":
-        st.write("**Quick Navigation:**")
-        cols = st.columns(min(5, len(summary_df)))
-        for i, row in summary_df.iterrows():
-            with cols[i % 5]:
-                if st.button(f"Slide {row['Page No']}", key=f"nav_slide_{i}"):
-                    st.session_state.selected_slide = i
-                    st.rerun()
-    
-    elif file_type == "xlsx":
-        st.write("**Quick Navigation:**")
-        cols = st.columns(min(4, len(summary_df)))
-        for i, row in summary_df.iterrows():
-            sheet_name = row['Page No'].replace('Sheet: ', '')
-            with cols[i % 4]:
-                if st.button(f"{sheet_name}", key=f"nav_sheet_{i}"):
-                    st.session_state.selected_sheet = sheet_name
-                    st.rerun()
 
 def to_excel(df):
     """Convert DataFrame to Excel bytes"""
