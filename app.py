@@ -53,15 +53,13 @@ def create_summary_table(content, file_type):
         for i, slide in enumerate(content):
             word_count = len(slide["text"].split()) if slide["text"] else 0
             char_count = len(slide["text"]) if slide["text"] else 0
-            table_count = len(slide["tables"]) if "tables" in slide else 0
-            image_count = len(slide["images"]) if "images" in slide else 0
             
             summary_data.append({
                 "Page No": i + 1,
                 "# of words in page": word_count,
                 "# of characters in page": char_count,
-                "# of tables in page": table_count,
-                "# of images in page": image_count
+                "# of tables in page": 0,
+                "# of images in page": 0
             })
     
     elif file_type == "docx":
@@ -150,21 +148,8 @@ def create_json_summary(content, file_type, summary_df, filename):
         for i, slide in enumerate(content):
             slide_data = {
                 "slide_number": i + 1,
-                "text": slide["text"],
-                "table_count": len(slide["tables"]) if "tables" in slide else 0,
-                "image_count": len(slide["images"]) if "images" in slide else 0,
-                "tables": []
+                "text": slide["text"]
             }
-            
-            # Add table data
-            if "tables" in slide:
-                for j, table in enumerate(slide["tables"]):
-                    table_data = {
-                        "table_number": j + 1,
-                        "data": table.to_dict('records') if not table.empty else []
-                    }
-                    slide_data["tables"].append(table_data)
-            
             json_data["content"]["slides"].append(slide_data)
     
     elif file_type == "docx":
@@ -327,33 +312,8 @@ if uploaded_file is not None:
             slide_num = st.selectbox("Select Slide", range(len(slides)), index=st.session_state.selected_slide)
             st.session_state.selected_slide = slide_num
             
-            slide = slides[slide_num]
             st.subheader(f"🎞️ Slide {slide_num + 1} Content")
-            
-            # Create tabs for better organization
-            tab1, tab2, tab3 = st.tabs(["Text Content", "Images", "Tables"])
-            
-            with tab1:
-                if slide["text"]:
-                    st.write(slide["text"])
-                else:
-                    st.write("No text content found on this slide.")
-            
-            with tab2:
-                if "images" in slide and slide["images"]:
-                    for i, img in enumerate(slide["images"]):
-                        st.write(f"**Image {i+1}:**")
-                        st.image(img, use_container_width=True)
-                else:
-                    st.write("No images found on this slide.")
-            
-            with tab3:
-                if "tables" in slide and slide["tables"]:
-                    for i, table in enumerate(slide["tables"]):
-                        st.write(f"**Table {i+1}:**")
-                        st.dataframe(table, use_container_width=True)
-                else:
-                    st.write("No tables found on this slide.")
+            st.write(slides[slide_num]["text"])
 
         elif file_type == "xlsx":
             sheets = process_excel(file_bytes)
