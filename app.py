@@ -22,6 +22,72 @@ def process_pptx(file_bytes):
 def process_excel(file_bytes):
     return extract_from_excel(BytesIO(file_bytes))
 
+def create_summary_table(content, file_type):
+    """Create document structure summary table"""
+    summary_data = []
+    
+    if file_type == "pdf":
+        for i, page in enumerate(content):
+            word_count = len(page["text"].split()) if page["text"] else 0
+            char_count = len(page["text"]) if page["text"] else 0
+            table_count = len(page["tables"])
+            image_count = len(page["images"])
+            
+            summary_data.append({
+                "Page No": i + 1,
+                "# of words in page": word_count,
+                "# of characters in page": char_count,
+                "# of tables in page": table_count,
+                "# of images in page": image_count
+            })
+    
+    elif file_type == "pptx":
+        for i, slide in enumerate(content):
+            word_count = len(slide["text"].split()) if slide["text"] else 0
+            char_count = len(slide["text"]) if slide["text"] else 0
+            
+            summary_data.append({
+                "Page No": i + 1,
+                "# of words in page": word_count,
+                "# of characters in page": char_count,
+                "# of tables in page": 0,
+                "# of images in page": 0
+            })
+    
+    elif file_type == "docx":
+        word_count = len(content["text"].split()) if content["text"] else 0
+        char_count = len(content["text"]) if content["text"] else 0
+        
+        summary_data.append({
+            "Page No": 1,
+            "# of words in page": word_count,
+            "# of characters in page": char_count,
+            "# of tables in page": 0,
+            "# of images in page": 0
+        })
+    
+    elif file_type == "xlsx":
+        for i, (sheet_name, df) in enumerate(content.items()):
+            word_count = df.astype(str).apply(lambda x: x.str.split().str.len()).sum().sum()
+            char_count = df.astype(str).apply(lambda x: x.str.len()).sum().sum()
+            
+            summary_data.append({
+                "Page No": f"Sheet: {sheet_name}",
+                "# of words in page": word_count,
+                "# of characters in page": char_count,
+                "# of tables in page": 1,
+                "# of images in page": 0
+            })
+    
+    return pd.DataFrame(summary_data)
+
+def to_excel(df):
+    """Convert DataFrame to Excel bytes"""
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Document_Summary')
+    return output.getvalue()
+
 uploaded_file = st.file_uploader(
     "Upload a PDF, Word (.docx), PowerPoint (.pptx), or Excel (.xlsx) file",
     type=["pdf", "docx", "pptx", "xlsx"]
@@ -34,32 +100,21 @@ if uploaded_file is not None:
     with st.spinner("Processing file..."):
         if file_type == "pdf":
             pages = process_pdf(file_bytes)
-            # Build summary table
-            summary_data = []
-            for i, page in enumerate(pages):
-                summary_data.append({
-                    "Page No": i + 1,
-                    "# of words": page["num_words"],
-                    "# of characters": page["num_chars"],
-                    "# of tables": page["num_tables"],
-                    "# of images": page["num_images"]
-                })
-            summary_df = pd.DataFrame(summary_data)
-            st.subheader("Document Structure Summary")
-            st.dataframe(summary_df)
-
-            # Download button
-            output = BytesIO()
-            with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-                summary_df.to_excel(writer, index=False, sheet_name="Summary")
+            
+            # Create and display summary table
+            summary_df = create_summary_table(pages, file_type)
+            st.subheader("📊 Document Structure Summary")
+            st.dataframe(summary_df, use_container_width=True)
+            
+            # Download button for summary
+            excel_data = to_excel(summary_df)
             st.download_button(
-                label="Download Summary as Excel",
-                data=output.getvalue(),
-                file_name="document_summary.xlsx",
+                label="📥 Download Summary as Excel",
+                data=excel_data,
+                file_name=f"{uploaded_file.name}_summary.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
-
-            # Page selector
+            
             page_num = st.selectbox("Select Page", range(len(pages)))
             page = pages[page_num]
             st.subheader("Text Content")
@@ -74,17 +129,62 @@ if uploaded_file is not None:
 
         elif file_type == "docx":
             content = process_docx(file_bytes)
+            
+            # Create and display summary table
+            summary_df = create_summary_table(content, file_type)
+            st.subheader("📊 Document Structure Summary")
+            st.dataframe(summary_df, use_container_width=True)
+            
+            # Download button for summary
+            excel_data = to_excel(summary_df)
+            st.download_button(
+                label="📥 Download Summary as Excel",
+                data=excel_data,
+                file_name=f"{uploaded_file.name}_summary.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+            
             st.subheader("Text Content")
             st.write(content["text"])
 
         elif file_type == "pptx":
             slides = process_pptx(file_bytes)
+            
+            # Create and display summary table
+            summary_df = create_summary_table(slides, file_type)
+            st.subheader("📊 Document Structure Summary")
+            st.dataframe(summary_df, use_container_width=True)
+            
+            # Download button for summary
+            excel_data = to_excel(summary_df)
+            st.download_button(
+                label="📥 Download Summary as Excel",
+                data=excel_data,
+                file_name=f"{uploaded_file.name}_summary.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+            
             slide_num = st.selectbox("Select Slide", range(len(slides)))
             st.subheader("Slide Text")
             st.write(slides[slide_num]["text"])
 
         elif file_type == "xlsx":
             sheets = process_excel(file_bytes)
+            
+            # Create and display summary table
+            summary_df = create_summary_table(sheets, file_type)
+            st.subheader("📊 Document Structure Summary")
+            st.dataframe(summary_df, use_container_width=True)
+            
+            # Download button for summary
+            excel_data = to_excel(summary_df)
+            st.download_button(
+                label="📥 Download Summary as Excel",
+                data=excel_data,
+                file_name=f"{uploaded_file.name}_summary.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+            
             sheet = st.selectbox("Select Sheet", list(sheets.keys()))
             st.subheader(f"Sheet: {sheet}")
             st.dataframe(sheets[sheet])
