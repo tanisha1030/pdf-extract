@@ -11,6 +11,8 @@ def extract_from_pdf(file):
     for page_num in range(len(doc)):
         page = doc.load_page(page_num)
         text = page.get_text()
+        num_words = len(text.split())
+        num_chars = len(text)
         images = []
         for img_index, img in enumerate(page.get_images(full=True)):
             xref = img[0]
@@ -25,7 +27,15 @@ def extract_from_pdf(file):
                 tables_data.append(df)
             except:
                 pass
-        pages_info.append({"text": text, "images": images, "tables": tables_data})
+        pages_info.append({
+            "text": text,
+            "num_words": num_words,
+            "num_chars": num_chars,
+            "num_tables": len(tables_data),
+            "num_images": len(images),
+            "images": images,
+            "tables": tables_data
+        })
     return pages_info
 
 def extract_from_docx(file):
