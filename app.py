@@ -6,6 +6,14 @@ from io import BytesIO
 st.set_page_config(page_title="Universal Info Extractor", layout="wide")
 st.title("📄 Universal File Information Extractor")
 
+# Initialize session state for navigation
+if 'selected_page' not in st.session_state:
+    st.session_state.selected_page = 0
+if 'selected_slide' not in st.session_state:
+    st.session_state.selected_slide = 0
+if 'selected_sheet' not in st.session_state:
+    st.session_state.selected_sheet = None
+
 @st.cache_resource(show_spinner=True)
 def process_pdf(file_bytes):
     return extract_from_pdf(BytesIO(file_bytes))
@@ -23,7 +31,7 @@ def process_excel(file_bytes):
     return extract_from_excel(BytesIO(file_bytes))
 
 def create_summary_table(content, file_type):
-    """Create document structure summary table"""
+    """Create document structure summary table with clickable links"""
     summary_data = []
     
     if file_type == "pdf":
@@ -80,6 +88,42 @@ def create_summary_table(content, file_type):
             })
     
     return pd.DataFrame(summary_data)
+
+def display_clickable_summary(summary_df, file_type, content=None):
+    """Display summary table with clickable navigation"""
+    st.subheader("📊 Document Structure Summary")
+    
+    # Display the summary table
+    st.dataframe(summary_df, use_container_width=True)
+    
+    # Create navigation buttons based on file type
+    if file_type == "pdf":
+        st.write("**Quick Navigation:**")
+        cols = st.columns(min(5, len(summary_df)))
+        for i, row in summary_df.iterrows():
+            with cols[i % 5]:
+                if st.button(f"Page {row['Page No']}", key=f"nav_page_{i}"):
+                    st.session_state.selected_page = i
+                    st.rerun()
+    
+    elif file_type == "pptx":
+        st.write("**Quick Navigation:**")
+        cols = st.columns(min(5, len(summary_df)))
+        for i, row in summary_df.iterrows():
+            with cols[i % 5]:
+                if st.button(f"Slide {row['Page No']}", key=f"nav_slide_{i}"):
+                    st.session_state.selected_slide = i
+                    st.rerun()
+    
+    elif file_type == "xlsx":
+        st.write("**Quick Navigation:**")
+        cols = st.columns(min(4, len(summary_df)))
+        for i, row in summary_df.iterrows():
+            sheet_name = row['Page No'].replace('Sheet: ', '')
+            with cols[i % 4]:
+                if st.button(f"{sheet_name}", key=f"nav_sheet_{i}"):
+                    st.session_state.selected_sheet = sheet_name
+                    st.rerun()
 
 def to_excel(df):
     """Convert DataFrame to Excel bytes"""
