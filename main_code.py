@@ -38,6 +38,7 @@ def extract_from_pdf(file):
         })
     return pages_info
 
+
 def extract_from_docx(file):
     doc = Document(file)
     text = "\n".join([para.text for para in doc.paragraphs])
