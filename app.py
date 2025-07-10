@@ -34,6 +34,32 @@ if uploaded_file is not None:
     with st.spinner("Processing file..."):
         if file_type == "pdf":
             pages = process_pdf(file_bytes)
+            # Build summary table
+            summary_data = []
+            for i, page in enumerate(pages):
+                summary_data.append({
+                    "Page No": i + 1,
+                    "# of words": page["num_words"],
+                    "# of characters": page["num_chars"],
+                    "# of tables": page["num_tables"],
+                    "# of images": page["num_images"]
+                })
+            summary_df = pd.DataFrame(summary_data)
+            st.subheader("Document Structure Summary")
+            st.dataframe(summary_df)
+
+            # Download button
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+                summary_df.to_excel(writer, index=False, sheet_name="Summary")
+            st.download_button(
+                label="Download Summary as Excel",
+                data=output.getvalue(),
+                file_name="document_summary.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
+            # Page selector
             page_num = st.selectbox("Select Page", range(len(pages)))
             page = pages[page_num]
             st.subheader("Text Content")
