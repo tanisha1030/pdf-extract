@@ -31,7 +31,7 @@ def process_excel(file_bytes):
     return extract_from_excel(BytesIO(file_bytes))
 
 def create_summary_table(content, file_type):
-    """Create document structure summary table with clickable links"""
+    """Create document structure summary table with totals row"""
     summary_data = []
     
     if file_type == "pdf":
@@ -86,8 +86,22 @@ def create_summary_table(content, file_type):
                 "# of tables in page": 1,
                 "# of images in page": 0
             })
-    
-    return pd.DataFrame(summary_data)
+
+    df = pd.DataFrame(summary_data)
+
+    # Add totals row
+    if not df.empty:
+        totals = {
+            "Page No": "TOTAL",
+            "# of words in page": df["# of words in page"].sum(),
+            "# of characters in page": df["# of characters in page"].sum(),
+            "# of tables in page": df["# of tables in page"].sum(),
+            "# of images in page": df["# of images in page"].sum(),
+        }
+        df = pd.concat([df, pd.DataFrame([totals])], ignore_index=True)
+
+    return df
+
 
 def display_clickable_summary(summary_df, file_type, content=None):
     """Display summary table"""
